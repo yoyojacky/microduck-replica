@@ -11,8 +11,9 @@
 ```
 USB 转接板(如飞特 URT-1 / Waveshare Bus Servo Adapter) --TTL--> STS3215 舵机
 舵机需要独立供电（7.4V 版本用 7.4V，12V 版本用 12V），不要从 USB 取电！
-如需购买: [飞特舵机驱动板淘宝购买链接](https://detail.1688.com/offer/1029205075796.html?spm=a26286.8251493.description.2.221425b2cZEdhJ)
 ```
+
+如需购买舵机驱动板: [飞特舵机驱动板淘宝购买链接](https://detail.1688.com/offer/1029205075796.html?spm=a26286.8251493.description.2.221425b2cZEdhJ)
 
 默认串口 `/dev/ttyUSB0`，默认波特率 1,000,000（STS3215 出厂值）。
 
