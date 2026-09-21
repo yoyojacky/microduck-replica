@@ -30,7 +30,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # 调试台版本。改了前端或后端就加一：index.html 里的 PAGE_VERSION 要跟这里一样，
 # 页面连上后会比对，不一样就提示"页面是旧的，Ctrl+F5"。改动记在 README 的「版本」一节。
-VERSION = "0.8.1"
+VERSION = "0.9.1"
 DEFAULT_IDS = "20-24,30-34,10-14"
 JOINT_NAMES = {
     20: "left_hip_yaw", 21: "left_hip_roll", 22: "left_hip_pitch", 23: "left_knee", 24: "left_ankle",
@@ -179,7 +179,7 @@ STREAM_LAST = {}       # goals_stream 上一帧给每颗的目标，用来算这
 def release_speed(ids):
     """把速度上限放开、加速度设最大（41 = 0，46 = MAX_SPEED_REG），目标位置保持当前目标不变。"""
     st = BUS.states(ids)
-    items = [(i, bytes([0]) + struct.pack("<H", st[i]["goal"] & 0xFFFF) + struct.pack("<H", 0) + struct.pack("<H", MAX_SPEED_REG))
+    items = [(i, bytes([0]) + struct.pack("<H", enc_sm(st[i]["goal"])) + struct.pack("<H", 0) + struct.pack("<H", enc_sm(MAX_SPEED_REG)))
              for i in ids if st.get(i)]
     if items:
         BUS.sync_write(41, 7, items)
@@ -211,6 +211,12 @@ def list_ports():
         return []
 
 
+def bus_trace(line):
+    """串口收发的原始字节，只进日志文件（页面不显示，不然刷屏）。
+    出问题时 grep 日志文件里的 → / ← 就能还原当时总线上到底发生了什么。"""
+    log(line, "总线", "debug")
+
+
 def open_bus(port, baud=None):
     """打开串口并接管总线。失败不抛异常，返回 {ok, msg}，页面照样能用（假总线）。"""
     global BUS, PORT, BAUD, PRESENT
@@ -222,6 +228,7 @@ def open_bus(port, baud=None):
         msg = f"打不开 {port}：{type(e).__name__}: {e}；现在能看到的串口：{ports}"
         log(msg, "总线", "error")
         return {"ok": False, "msg": msg}
+    bus.trace = bus_trace
     old = BUS
     BUS, PORT, BAUD = bus, port, baud
     if old is not None and not isinstance(old, FakeBus):
@@ -276,10 +283,13 @@ def _ack(err):
 
 
 def fmt_off(v):
-    """偏移寄存器 31：HD-1910 第 15 位是符号位，34279 = -1511。"""
+    """偏移寄存器 31：HD-1910 第 15 位是符号位，34279 = -1511。
+    传进来的可能是原始寄存器值，也可能是已经解过符号的负数，两种都得印对。"""
     if v is None:
         return "?"
-    return f"{feetech.sign15(v)}({v})" if v & 0x8000 else str(v)
+    if v < 0:
+        return str(v)                                  # 已经是带符号的，直接印
+    return f"{feetech.sign15(v)}（原始{v}）" if v & 0x8000 else str(v)
 
 
 def is_fake():
@@ -385,54 +395,199 @@ def shift_saved_poses(deltas, sign=1, only=None, exclude=()):
     return changed
 
 
-CALIB_TOLERANCE = 2    # 0x0B 是舵机自己把当前位置记成目标值，校完读数应该正好是目标，±2 步算读数抖动
+CALIB_TOLERANCE = 2      # 校准后读数离目标多少步算到位
+DROOP_TOLERANCE = 3      # 关扭矩那几毫秒关节垂了多少步以内就不补偿
+OFFSET_LIMIT = 2047      # 偏移寄存器 31 的安全量程：手册说 0~2047 表示正、2048~4095 表示负，
+                         # 只有 |偏移| ≤ 2047 这一段几种编码理解都一致，超出就不写
+CALIB_LOCK = threading.Lock()   # 校准期间不让状态轮询抢总线：一次 sync_read 卡住能占几百毫秒，
+                                # 正好落在关扭矩的窗口里，关节就垂下去了
+OFFSET_SIGN = None       # +1：读数 = 原始 + 偏移；-1：读数 = 原始 − 偏移。手册没写死，开机探一次
+
+
+def enc_sm(v):
+    """符号-幅值编码：寄存器 31（偏移）、42（目标位置）、46（速度）都是 BIT15 当方向位，
+    不是二进制补码。写 -5 要写 0x8005；写成 0xFFFB 舵机会理解成 -32763，然后满速撞限位。"""
+    v = int(v)
+    return (0x8000 | (-v & 0x7FFF)) if v < 0 else (v & 0x7FFF)
+
+
+enc_off = enc_sm          # 老名字留着，别处还在用
+
+
+def read_off(i):
+    return feetech.sign15(BUS.read_u16(i, 31))
+
+
+def read_pos(i):
+    return feetech.sign15(BUS.read_u16(i, 56))
+
+
+def write_off(i, v):
+    return BUS.write_u16(i, 31, enc_sm(v))
+
+
+def wait_off_change(i, was, ms=20):
+    """写完偏移就轮询它落地没有，最多等 ms 毫秒。比固定 sleep 强在：
+    落地通常 1~2 ms，固定睡 20 ms 等于白送 18 ms 的重力下垂。返回 (读到的偏移, 变了没有)。"""
+    end = time.monotonic() + ms / 1000.0
+    off = was
+    while True:
+        off = read_off(i)
+        if off != was or time.monotonic() >= end:
+            return off, off != was
+
+
+def probe_offset_sign(i):
+    """探一次偏移的符号方向：扭矩开着时把偏移 +1，看读数往哪边动。
+
+    只动 1 步（0.09°），而且在校准窗口之外做，不影响精度。同型号固件一致，探一次给 15 颗共用。
+    兜底方案靠它一次写到位；探不出来就两个方向都试（慢，但仍然安全）。"""
+    global OFFSET_SIGN
+    if OFFSET_SIGN is not None:
+        return OFFSET_SIGN
+    try:
+        o0, r0 = read_off(i), read_pos(i)
+        if abs(o0 + 1) > OFFSET_LIMIT:
+            return None
+        BUS.unlock(i)
+        write_off(i, o0 + 1)
+        wait_off_change(i, o0)
+        r1 = read_pos(i)
+        write_off(i, o0)                      # 立刻还原，只是探一下
+        wait_off_change(i, o0 + 1)
+        BUS.lock(i)
+        if r1 == r0:
+            log(f"偏移符号探针：#{i} 偏移 +1 读数没变（{r0}），方向未知，兜底时两个方向都试", "校准", "warn")
+            return None
+        OFFSET_SIGN = 1 if r1 > r0 else -1
+        log(f"偏移符号探针：#{i} 偏移 +1 → 读数 {r0}→{r1}，即「读数 = 原始 {'+' if OFFSET_SIGN > 0 else '−'} 偏移」", "校准")
+        return OFFSET_SIGN
+    except Exception as e:
+        log(f"偏移符号探针失败：{type(e).__name__}: {e}", "校准", "warn", exc=True)
+        return None
+
+
+def calibrate_by_offset(i, target, trail):
+    """兜底：舵机连 0x0B 也不认时，自己算偏移写寄存器 31。
+
+    符号方向优先用探针的结果（一次写就够）；探不出来就两个方向都试、回读验证。
+    只要没成功就把原偏移写回去，中途抛异常也一样 —— 绝不给舵机留一个乱写的偏移。
+    返回 (成功与否, 校准后读数, 现在的偏移)。"""
+    o0, r0 = read_off(i), read_pos(i)
+    signs = [OFFSET_SIGN] if OFFSET_SIGN else [1, -1]
+    ok, pos, off = False, r0, o0
+    try:
+        for sign in signs:
+            cand = o0 + sign * (target - r0)
+            if abs(cand) > OFFSET_LIMIT:
+                trail.append(f"偏移{cand:+d}超量程跳过")
+                continue
+            write_off(i, cand)
+            off, _ = wait_off_change(i, off)
+            pos = read_pos(i)
+            trail.append(f"写偏移{cand}→读数{pos}")
+            if abs(pos - target) <= CALIB_TOLERANCE:
+                ok = True
+                return True, pos, off
+        return False, pos, off
+    finally:
+        if not ok and off != o0:
+            try:
+                write_off(i, o0)
+                off, _ = wait_off_change(i, off)
+                trail.append(f"没成，偏移已还原成{o0}")
+            except Exception as e:
+                log(f"#{i} 兜底失败后还原偏移也失败了：{type(e).__name__}: {e}", "校准", "error", exc=True)
 
 
 def calibrate_one(i, before, target=2048):
     """一颗舵机的位置校准：让它「现在这个位置」的读数变成 target（默认 2048 = 官方零位）。
 
-    用 0x0B 位置校准指令，带参数 = 校成指定值。HD-1910（固件 3.46）不认扭矩开关写 128：
-    2026-09-20 实测 4 轮，解锁、扭矩关着写 128，15 颗偏移一个都没变；协议手册里 HLS ≥3.43 也写着不支持 128。
-    顺序：解锁 → 读当前位置 → 关扭矩 → 0x0B → 读回 → 对上了才把目标改成 target → 扭矩复原 → 加锁。
-    关扭矩到恢复只有几毫秒、中间不 sleep：0.7.x 关着扭矩等了 30–130 ms，颈部被重力压下去 80 步，校的就不是摆好的位置。
-    读回没对上就把目标写成读回值（原地不动），绝不拿 target 去拉关节。出错在 finally 里加锁。
-    返回 {"ok", "pre": 校准前读数, "pos": 校准后读数, "target", "why"}。"""
+    两条路：先用 0x0B 位置校准指令（舵机自己算偏移、自己存 EEPROM），不生效就自己算偏移写寄存器 31。
+    HD-1910（固件 3.46）不认扭矩开关写 128：2026-09-20 实测 4 轮，解锁、扭矩关着写 128，
+    15 颗偏移一个都没变，还照样回"成功"应答 —— 所以**判据不看应答，看偏移寄存器变没变**。
+
+    关扭矩期间关节被重力压下去（实测颈部 0.62 步/毫秒），而 USB 串口一个来回 1~16 ms，窗口没法做到零。
+    对策是把下垂**算出来补偿**：
+
+        校准前读数 pre（扭矩还开着，舵机顶着你摆好的位置）
+        校准后这个位置读 target（0x0B 的定义），偏移变了 Δ
+        下垂 d = pre − target + 符号 × Δ          ← 三个数都读得到
+
+    把偏移再挪 d，你摆好的那个位置就正好读 target。关节本身不动（停在垂下去的地方），
+    扭矩恢复后也不会自己回去 —— 要回去用「回零位」按正常限速走。
+
+    顺序：压低加速度/速度 → 解锁 → 读 pre → 关扭矩并**回读确认真关了** → 0x0B → 轮询偏移确认落地
+    → 没落地就兜底 → 算下垂补偿 → 目标写成**当前读数**（永远不写 target，判断错了也不会拉关节）
+    → 扭矩复原 → 加锁 → 恢复速度。中途出错，finally 里照样写目标、恢复扭矩、加锁。
+    返回 {"ok", "pre", "pos", "target", "droop", "method", "why"}。"""
     was_on = before.get("torque") == 1
     old_off = before.get("offset")
-    trail, step, ok, pre, pos, off, why = [], "解锁", False, None, None, None, ""
+    trail, step, ok, pre, pos, off, why = [], "限速", False, None, None, None, ""
+    method, droop = "0x0B", 0
     try:
+        # 安全网：校准期间把这颗压成慢速小加速度。万一哪一步判断错了，关节也是慢慢走，人能伸手挡住
+        BUS.write_u8(i, 41, 10)
+        BUS.write_u16(i, 46, enc_sm(200))
+        step = "解锁"
         trail.append("解锁" + _ack(BUS.unlock(i)))
         step = "读当前位置"
-        pre = feetech.sign15(BUS.read_u16(i, 56))     # 紧挨着校准再读一次：备份那次可能是几百毫秒前
+        pre = read_pos(i)                     # 扭矩还开着，读到的就是舵机顶着的位置 = 你摆好的位置
+        o_before = read_off(i)
         if was_on:
             step = "关扭矩"
-            trail.append("关扭矩" + _ack(BUS.write_u8(i, 40, 0)))
+            BUS.write_u8(i, 40, 0)
+            if BUS.read_u8(i, 40) != 0:       # 这包丢了的话 0x0B 会在扭矩开着时执行，偏移一改就满速拉
+                BUS.write_u8(i, 40, 0)
+                if BUS.read_u8(i, 40) != 0:
+                    raise feetech.BusError("关扭矩没生效（回读不是 0），不敢往下做")
+            trail.append("关扭矩✓")
         step = "0x0B 位置校准"
         trail.append(f"0x0B→{target}" + _ack(BUS.calibrate_to(i, target)))
-        step = "读回位置"
-        for _ in range(3):                            # 不 sleep：每次读本身约 1 ms
-            pos = feetech.sign15(BUS.read_u16(i, 56))
-            if abs(pos - target) <= CALIB_TOLERANCE:
-                break
-        ok = abs(pos - target) <= CALIB_TOLERANCE
+        step = "确认偏移变了"
+        off, changed = wait_off_change(i, o_before)
+        pos = read_pos(i)
+        ok = changed or abs(pre - target) <= CALIB_TOLERANCE   # 本来就在目标上，偏移不变也算对
+        if not ok:
+            step = "兜底：写偏移寄存器 31"
+            trail.append("0x0B 没让偏移变，改用写偏移")
+            ok, pos, off = calibrate_by_offset(i, target, trail)
+            method = "写偏移31"
+        if ok:
+            step = "算下垂并补偿"
+            sign = OFFSET_SIGN or 1
+            droop = pre - target + sign * (off - o_before)
+            if abs(droop) > DROOP_TOLERANCE and abs(off - sign * droop) <= OFFSET_LIMIT:
+                write_off(i, off - sign * droop)
+                off, _ = wait_off_change(i, off)
+                pos = read_pos(i)
+                trail.append(f"关扭矩期间垂了{droop:+d}步，偏移再补{-sign * droop:+d}")
+            elif abs(droop) > DROOP_TOLERANCE:
+                trail.append(f"垂了{droop:+d}步但补偿超量程，没补")
         step = "写目标"
-        goal = target if ok else pos
-        trail.append(f"目标{goal}" + _ack(BUS.write_u16(i, 42, goal & 0xFFFF)))
+        trail.append(f"目标{pos}" + _ack(BUS.write_u16(i, 42, enc_sm(pos))))   # 永远写当前读数
         if was_on:
             step = "开扭矩"
             trail.append("开扭矩" + _ack(BUS.write_u8(i, 40, 1)))
-        step = "读偏移"
-        off = BUS.read_u16(i, 31)
         if not ok:
-            why = (f"0x0B 后读数 {pos}，不是 {target}（偏移"
-                   + ("没变，舵机没执行校准" if off == old_off else f"变了 {fmt_off(old_off)}→{fmt_off(off)}，但读数对不上") + "）")
+            why = f"0x0B 和写偏移都没让偏移变（还是 {fmt_off(o_before)}），读数 {pos} 不是 {target}"
     except Exception as e:
         ok = False
         why = f"卡在「{step}」：{type(e).__name__}: {e}"
         trail.append("✗" + why)
-        log(f"#{i} {why}（扭矩{'没恢复' if was_on else '本来就关着'}；0x0B 之后出错的话偏移可能已经改了，导出寄存器看 31）",
-            "校准", "error", exc=True)
+        log(f"#{i} {why}", "校准", "error", exc=True)
     finally:
+        # 不管上面怎么错，都要：目标对准当前读数（下次开扭矩不会按旧坐标系把关节拉走）→ 扭矩复原 → 加锁 → 恢复速度
+        try:
+            p = read_pos(i)
+            BUS.write_u16(i, 42, enc_sm(p))
+            if was_on and BUS.read_u8(i, 40) != 1:
+                BUS.write_u8(i, 40, 1)
+                trail.append("扭矩已恢复")
+        except Exception as e:
+            trail.append(f"✗收尾（写目标/恢复扭矩）：{type(e).__name__}: {e}")
+            log(f"#{i} 收尾失败，这颗可能卸着力、目标寄存器指向旧位置，开扭矩前先手动写目标："
+                f"{type(e).__name__}: {e}", "校准", "error", exc=True)
         try:
             BUS.lock(i)
             locked = BUS.read_u8(i, 55)
@@ -440,12 +595,26 @@ def calibrate_one(i, before, target=2048):
         except Exception as e:
             trail.append(f"✗加锁：{type(e).__name__}: {e}")
             log(f"#{i} 加锁失败，舵机可能还是解锁状态：{type(e).__name__}: {e}", "校准", "error", exc=True)
-    head = (f"#{i} 读数 {pre if pre is not None else '?'}→{pos if pos is not None else '?'}（目标 {target}）"
+        try:
+            release_speed([i])
+        except Exception:
+            pass
+    head = (f"#{i} 读数 {pre if pre is not None else '?'}→{pos if pos is not None else '?'}（目标 {target}，{method}）"
             f" 偏移 {fmt_off(old_off)}→{fmt_off(off)}"
+            + (f" 下垂{droop:+d}步" if droop else "")
             + ("" if before.get("lock") == 1 else f" 校准前锁标志 {before.get('lock')}")
             + f" 扭矩原来{'开' if was_on else '关'}")
     log(head + " · " + " ".join(trail) + ("" if ok else f" · 失败：{why}"), "校准", "info" if ok else "warn")
-    return {"ok": ok, "pre": pre, "pos": pos, "target": target, "why": why}
+    return {"ok": ok, "pre": pre, "pos": pos, "target": target, "droop": droop, "method": method, "why": why}
+
+
+def save_json_atomic(path, obj):
+    """先写 .tmp 再改名：json.dump 写一半崩了会留个半截文件，
+    而读不了的姿态/备份文件只会被静默跳过，等于悄悄丢数据。"""
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
 
 
 def read_pose_file(fn):
@@ -456,6 +625,12 @@ def read_pose_file(fn):
 
 
 def calibrate_mid_all(ids, ref=None):
+    """（见下）。整段持 CALIB_LOCK：状态轮询和另一个标签页都得让路。"""
+    with CALIB_LOCK:
+        return _calibrate_mid_all(ids, ref)
+
+
+def _calibrate_mid_all(ids, ref=None):
     """把选中舵机「现在的位置」校准成目标读数，一颗一颗来：每颗只关几毫秒扭矩，别的舵机照样撑着。
 
     ref=None：目标都是 2048，鸭子要摆成官方零位（腿伸直、脚板垂直、头平视、嘴闭上）。
@@ -473,11 +648,15 @@ def calibrate_mid_all(ids, ref=None):
     log(f"开始校准 {len(ids)} 颗到{name}：{ids}", "校准")
     fn, before = backup_calibration(ids)
     log(f"原来的偏移、读数、扭矩、锁标志备份在 calib/{fn}", "校准")
+    probe_offset_sign(next((i for i in ids if "offset" in before.get(str(i), {})), ids[0]))
     ok, bad, deltas = [], {}, {}
     for i in ids:
         b = before.get(str(i), {})
         if i not in targets:
             bad[i] = "参考姿态里没有这颗"
+            continue
+        if not 0 <= targets[i] <= 4095:               # 姿态文件是能手改的 JSON，改错一个数就校到离谱的读数上
+            bad[i] = f"目标 {targets[i]} 不在 0~4095，没动它"
             continue
         if "offset" not in b:
             bad[i] = "备份时读不到，没动它"
@@ -485,17 +664,22 @@ def calibrate_mid_all(ids, ref=None):
         r = calibrate_one(i, b, targets[i])
         if r["ok"]:
             ok.append(i)
-            deltas[str(i)] = r["pos"] - r["pre"]       # 同一个物理位置，读数从 pre 变成了 pos
+            # 同一个物理位置（你摆好的那个），读数从 pre 变成了 target —— 下垂已经补偿掉了
+            deltas[str(i)] = r["target"] - r["pre"]
         else:
             bad[i] = r["why"]
-    moved = [] if ref else shift_saved_poses(deltas)
+    # 先把「打算挪哪些」落盘再真挪：反过来的话，中间崩了就再也挪不回去了
     bp = os.path.join(CALIB_DIR, fn)
     with open(bp, encoding="utf-8") as f:
         rec = json.load(f)
+    plan = [] if ref else [p["file"] for p in list_poses() if p.get("goals")]
     rec.update({"ref": ref, "targets": {str(k): v for k, v in targets.items() if k in ids},
-                "deltas": deltas, "shifted": moved, "bad": {str(k): v for k, v in bad.items()}})
-    with open(bp, "w", encoding="utf-8") as f:
-        json.dump(rec, f, ensure_ascii=False, indent=1)
+                "deltas": deltas, "shifted": plan, "bad": {str(k): v for k, v in bad.items()}})
+    save_json_atomic(bp, rec)
+    moved = [] if ref else shift_saved_poses(deltas, only=set(plan))
+    if moved != plan:
+        rec["shifted"] = moved
+        save_json_atomic(bp, rec)
     if moved:
         log(f"存的姿态换算到新零点：{moved}（" + " ".join(f"#{k}{v:+d}" for k, v in deltas.items() if v) + "）", "姿态")
     log(f"校准完（{name}）：成功 {len(ok)} 颗 {ok}" + (f"；失败 {len(bad)} 颗 {sorted(bad)}，原因见上面每颗那行" if bad else "")
@@ -504,6 +688,12 @@ def calibrate_mid_all(ids, ref=None):
 
 
 def undo_calibration():
+    """（见下）。整段持 CALIB_LOCK。"""
+    with CALIB_LOCK:
+        return _undo_calibration()
+
+
+def _undo_calibration():
     """把最近一次备份里的偏移写回去（关扭矩 → 解锁 → 写 31 → 加锁），目标位置改成当前读数，扭矩状态照旧。"""
     files = sorted(f for f in os.listdir(CALIB_DIR) if f.startswith("eeprom-")) if os.path.isdir(CALIB_DIR) else []
     if not files:
@@ -522,19 +712,24 @@ def undo_calibration():
         trail, step, on = [], "读当前状态", False
         try:
             on = BUS.read_u8(i, 40) == 1
-            off0, p0 = BUS.read_u16(i, 31), feetech.sign15(BUS.read_u16(i, 56))
+            off0, p0 = BUS.read_u16(i, 31), read_pos(i)
             if on:
                 step = "关扭矩"
-                trail.append("关扭矩" + _ack(BUS.write_u8(i, 40, 0)))
+                BUS.write_u8(i, 40, 0)
+                if BUS.read_u8(i, 40) != 0:     # 跟校准一样：这包丢了，改偏移就等于让关节满速跑
+                    BUS.write_u8(i, 40, 0)
+                    if BUS.read_u8(i, 40) != 0:
+                        raise feetech.BusError("关扭矩没生效（回读不是 0），不敢写偏移")
+                trail.append("关扭矩✓")
             step = "解锁"
             trail.append("解锁" + _ack(BUS.unlock(i)))
             step = "写偏移"
             trail.append(f"写偏移{fmt_off(row['offset'])}" + _ack(BUS.write_u16(i, 31, row["offset"])))
-            time.sleep(0.02)
             step = "读回"
-            off1, p1 = BUS.read_u16(i, 31), feetech.sign15(BUS.read_u16(i, 56))
+            wait_off_change(i, feetech.sign15(off0))   # 轮询落地，别固定睡 20 ms 让关节多垂
+            off1, p1 = BUS.read_u16(i, 31), read_pos(i)
             step = "写目标"
-            trail.append(f"目标{p1}" + _ack(BUS.write_u16(i, 42, p1 & 0xFFFF)))
+            trail.append(f"目标{p1}" + _ack(BUS.write_u16(i, 42, enc_sm(p1))))
             if on:
                 step = "开扭矩"
                 trail.append("开扭矩" + _ack(BUS.write_u8(i, 40, 1)))
@@ -546,14 +741,30 @@ def undo_calibration():
             bad[i] = f"卡在「{step}」：{type(e).__name__}: {e}"
             log(f"#{i} 撤销{bad[i]}（扭矩{'没恢复' if on else '本来就关着'}）", "校准", "error", exc=True)
         finally:
+            try:                                       # 跟校准同样的收尾：目标对准当前读数再恢复扭矩
+                p = read_pos(i)
+                BUS.write_u16(i, 42, enc_sm(p))
+                if on and BUS.read_u8(i, 40) != 1:
+                    BUS.write_u8(i, 40, 1)
+            except Exception as e:
+                log(f"#{i} 撤销收尾失败，这颗可能卸着力：{type(e).__name__}: {e}", "校准", "error", exc=True)
             try:
                 BUS.lock(i)
             except Exception as e:
                 log(f"#{i} 加锁失败：{type(e).__name__}: {e}", "校准", "error", exc=True)
     if "shifted" in rec:
-        moved = shift_saved_poses(rec.get("deltas", {}), sign=-1, only=set(rec["shifted"]))
+        # 当次挪过的要挪回来；校准之后新存的姿态是按新坐标系存的，也得挪回去，
+        # 不然撤销完它们指向的物理姿势整体偏了 delta 步，一发就把关节顶到限位
+        later = []
+        t0 = rec.get("time", "")
+        for p in list_poses():
+            if p["file"] in rec["shifted"] or not p.get("goals"):
+                continue
+            if (p.get("time") or "") >= t0[:16]:
+                later.append(p["file"])
+        moved = shift_saved_poses(rec.get("deltas", {}), sign=-1, only=set(rec["shifted"]) | set(later))
         if moved:
-            log(f"存的姿态换算回原来的零点：{moved}；这次校准之后新存的姿态没动", "姿态")
+            log(f"存的姿态换算回原来的零点：{moved}" + (f"（其中 {later} 是校准之后存的，按新零点存的也要挪）" if later else ""), "姿态")
     elif any(rec.get("deltas", {}).values()):
         log("这份备份是 0.8.0 以前的，没记当时挪了哪些姿态，姿态不自动挪回，需要的话手动核对", "姿态", "warn")
     os.rename(os.path.join(CALIB_DIR, fn), os.path.join(CALIB_DIR, "undone-" + fn))
@@ -666,7 +877,7 @@ def handle(cmd):
         if fresh:
             st = BUS.states(fresh)
             for i in fresh:
-                STREAM_LAST[i] = (st[i]["pos"] & 0xFFFF) if st.get(i) else want[i]
+                STREAM_LAST[i] = (st[i]["pos"] if st.get(i) else want[i])
         items = []
         for i, p in want.items():
             sps = abs(p - STREAM_LAST[i]) / dt * 1.2          # 留 20% 余量，宁可早到一点
@@ -690,7 +901,7 @@ def handle(cmd):
         st = BUS.states(list(want))
         items, speeds = [], {}
         for i, p in want.items():
-            cur = (st[i]["pos"] if st.get(i) else p) & 0xFFFF
+            cur = st[i]["pos"] if st.get(i) else p
             sps = abs(p - cur) / seconds                       # 步/秒
             reg = max(1, min(32767, int(round(sps / SPEED_UNIT)))) if sps > 0 else 1
             speeds[i] = reg
@@ -818,7 +1029,9 @@ async def stream():
     err_last, err_t = "", 0.0
     while True:
         t0 = time.monotonic()
-        if CLIENTS and PRESENT:
+        if CLIENTS and PRESENT and not CALIB_LOCK.locked():
+            # 校准期间不抢总线：一次 sync_read 遇上掉包能占几百毫秒，
+            # 正好卡在关扭矩的窗口里，关节就垂下去了
             try:
                 st = await asyncio.to_thread(BUS.states, PRESENT)
                 for i, v in st.items():

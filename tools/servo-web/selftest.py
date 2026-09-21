@@ -80,13 +80,16 @@ def main():
     p = [x for x in server.list_poses() if x["name"] == "测试站姿"][0]
     check(all(p["goals"][i] == start[i] for i in IDS), "存的姿态换算回原值")
 
-    print("校准后新存的姿态，撤销时不该被挪（2026-09-20 真机踩到）")
+    print("校准后新存的姿态，撤销时也要跟着挪回来")
     H({"op": "calib_mid_all", "ids": IDS})
     H({"op": "save_pose", "name": "校准后存的"})
-    after = [x for x in server.list_poses() if x["name"] == "校准后存的"][0]["goals"]
+    phys_at_save = {i: sv[i].phys for i in IDS}     # 存它的时候，每个关节的物理位置
     H({"op": "calib_undo"})
-    again = [x for x in server.list_poses() if x["name"] == "校准后存的"][0]["goals"]
-    check(again == after, "撤销只挪当次挪过的姿态")
+    after = [x for x in server.list_poses() if x["name"] == "校准后存的"][0]["goals"]
+    # 真正要保证的：撤销以后把这个姿态发出去，关节还是回到存它时那个物理姿势
+    want = {i: round(phys_at_save[i] + sv[i].off) for i in IDS}
+    worst = max(abs(after[i] - want[i]) for i in IDS)
+    check(worst <= 2, f"撤销后姿态里的数字仍然指向存它时那个物理姿势（最大差 {worst} 步）")
     server.delete_pose([x for x in server.list_poses() if x["name"] == "校准后存的"][0]["file"])
 
     print("按姿态校准：鸭子缩着放好，读数校回「缩」里存的值")
@@ -111,17 +114,29 @@ def main():
     st = server.BUS.states(IDS)
     check(all(st[i]["pos"] == ref["goals"][i] + 7 for i in legs), "撤销回到偏了 7 步的样子")
 
-    print("舵机不认 0x0B：原地不动，报失败")
+    print("舵机不认 0x0B：自动换兜底（自己算偏移写寄存器 31）")
     sv[31].support_0b = False
-    p31 = sv[31].phys
     H({"op": "goals", "goals": {"31": 2300}})
     server.BUS.states([31])
     p31 = sv[31].phys
     r = H({"op": "calibrate", "id": 31})
-    server.BUS.states([31])
-    check(r["bad"].get("31", "").find("没执行") >= 0, f"失败原因：{r['bad'].get('31', '')[:50]}")
-    check(sv[31].phys == p31 and sv[31].r[40] == 1 and sv[31].r[55] == 1, "关节没被拉走、扭矩恢复、加锁了")
+    st = server.BUS.states([31])
+    check(r["ok"] == [31], f"兜底把它校准了（失败 {r['bad']}）")
+    check(abs(p31 + sv[31].off - 2048) <= 2, "兜底也是把摆好的位置校成 2048")
+    check(abs(sv[31].phys - p31) <= 20 and sv[31].r[40] == 1 and sv[31].r[55] == 1, "关节没被拉走、扭矩恢复、加锁了")
     sv[31].support_0b = True
+
+    print("0x0B 和写偏移都不认：偏移还原，不留半吊子")
+    sv[31].support_0b = False
+    sv[31].ignore_offset_writes = True
+    H({"op": "goals", "goals": {"31": 2300}})     # 先挪开，不然"本来就在 2048"会直接算成功
+    server.BUS.states([31])
+    o31 = sv[31].off
+    r = H({"op": "calibrate", "id": 31})
+    check(not r["ok"] and "31" in r["bad"], f"报失败（{r['bad'].get('31', '')[:40]}）")
+    check(sv[31].off == o31, "偏移原样还原")
+    sv[31].support_0b = True
+    sv[31].ignore_offset_writes = False
 
     print("写 128 在 HD-1910 上不生效（模拟器跟真机一致）")
     sv[32].calibrations = 0
@@ -138,17 +153,27 @@ def main():
     print("中途掉线：0x0B 以后读不到位置")
     sv[33].mute_after_calib = {56}
     r = H({"op": "calibrate", "id": 33})
-    sv[33].muted.clear()
+    sv[33].mute_after_calib.clear(); sv[33].muted.clear()
     why = r["bad"].get("33", "")
-    check("读回位置" in why, f"失败原因写明卡在哪一步（{why[:40]}…）")
+    check("卡在「" in why, f"失败原因写明卡在哪一步（{why[:40]}…）")
     check(sv[33].r[55] == 1, "出错也重新加锁了（finally）")
-    check(sv[33].r[40] == 0, "出错时扭矩不恢复，不拿旧目标去拉关节")
+    check(sv[33].r[40] == 0, "位置读不到就不恢复扭矩，免得按旧目标把关节拉走")
     line = [e for e in server.LOG if e["cat"] == "校准" and e["msg"].startswith("#33") and e["level"] == "warn"]
     check(bool(line) and "加锁✓" in line[-1]["msg"], "日志那行里有每一步的结果")
     with open(server.log_path(), encoding="utf-8") as f:
         text = f.read()
     check("Traceback" in text and "[校准][错误]" in text, "日志文件里有分类和 traceback")
     H({"op": "torque", "id": 33, "on": 1})
+
+    print("串口原始收发进日志文件")
+    server.BUS.trace = server.bus_trace
+    H({"op": "calibrate", "id": 32})
+    text = open(server.log_path(), encoding="utf-8").read()
+    check("→ #32 位置校准" in text, "发出去的 0x0B 包记下来了（含十六进制）")
+    check("地址40「扭矩开关」" in text and "地址31" in text, "读写寄存器记了地址和名字")
+    check("← #32 状态0x00" in text, "舵机的应答也记了")
+    check("SYNC_READ" not in text, "10 Hz 的状态轮询不记，不然日志全是它")
+    server.BUS.trace = None
 
     print("日志分类")
     cats = {e["cat"] for e in server.LOG}
@@ -157,6 +182,27 @@ def main():
     check(bool(ok_line) and "偏移" in ok_line[0]["msg"] and "0x0B→2048✓" in ok_line[0]["msg"], "成功的那颗也记了偏移前后、每一步")
     if ok_line:
         print("    例：" + ok_line[0]["msg"])
+
+    print("会往下垂的关节（真机颈部 0.62 步/毫秒，总线每包 1.5 ms）")
+    port.latency_ms = 1.5
+    for i in IDS:
+        sv[i].droop = 0.62
+    H({"op": "torque", "on": 1})
+    server.BUS.states(IDS)
+    held = {i: sv[i].phys for i in IDS}          # 扭矩开着，舵机顶着不动
+    r = H({"op": "calib_mid_all", "ids": IDS})
+    st = server.BUS.states(IDS)
+    check(len(r["ok"]) == 15, f"15 颗都成功（{len(r['ok'])} 成功，失败 {list(r['bad'])[:3]}）")
+    # 真正的精度指标：把「你摆好的那个物理位置」代进新的坐标系，应该正好读 2048。
+    # 关节被重力垂几步是物理现实，挡不住；能挡住的是"零位被垂坏"。
+    worst = max(abs(held[i] + sv[i].off - 2048) for i in IDS)
+    check(worst <= 2, f"摆好的位置校准后读 2048（最大误差 {worst:.0f} 步 = {worst * 360 / 4096:.2f}°）")
+    yank = max(abs(sv[i].phys - held[i]) for i in IDS)
+    check(yank <= 20, f"关节没被拉走（最多移动 {yank:.1f} 步，就是关扭矩那几毫秒垂的）")
+    for i in IDS:
+        sv[i].droop = 0.0
+    port.latency_ms = 0.0
+    H({"op": "calib_undo"})
 
     print("导出寄存器")
     r = H({"op": "dump", "id": 20})

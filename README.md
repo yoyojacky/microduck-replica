@@ -111,10 +111,11 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 后端不依赖飞特 SDK，[`feetech.py`](tools/servo-web/feetech.py) 按 2026 版协议手册直接收发包，一百多行。
 配套一个**协议级舵机模拟器**，不接硬件就能把校准、改 ID、写寄存器跑一遍自检。
 
-接官方运行时的 `FeetechIo`（`RobotIo` 接缝，rustypot 协议 v1）已经写完，等零位校准做完上板。
+接官方运行时的 `FeetechIo`（`RobotIo` 接缝，rustypot 协议 v1）已经写完、跟上了官方 0.14.1，等零位校准做完上板 —— 代码在 fork 的 **[`feetech` 分支](https://github.com/fanhao375/microduck/tree/feetech)**。
 
 **[网页调试台](tools/servo-web/)**　·
 **[飞特适配架构](software/飞特适配架构.md)**　·
+**[FeetechIo 代码](https://github.com/fanhao375/microduck/tree/feetech)**　·　
 [飞特官方资料](docs/飞特资料/)（协议、内存表）
 
 </td>

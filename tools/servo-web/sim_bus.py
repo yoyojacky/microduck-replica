@@ -10,11 +10,17 @@
 - 扭矩开关写 128：HD-1910（固件 3.46）回「成功」但什么都不做（2026-09-20 实测 4 轮，解锁、扭矩关着也一样；
   协议手册里 HLS ≥3.43 也不支持）。accept_128=True 时按 STS 的规矩：锁标志 = 0 且扭矩开关 = 0 才校准
 - 0x0B 位置校准：当前位置的读数改成参数值（没参数 = 2048）。support_0b=False 模拟不认这条指令的舵机
+- 偏移寄存器 31：offset_adds 控制是「位置 = 原始 + 偏移」还是「原始 − 偏移」，手册没写死，两种都能模拟
+- 重力下垂：扭矩一关，装在鸭子身上的关节就往下掉（真机实测颈部 130 ms 掉 80 步 ≈ 0.62 步/ms）。
+  droop 设成每毫秒掉几步 —— 不模拟这个，"关扭矩等太久把垂下去的位置校成零位"这类 bug 测不出来
+- 总线延迟：真机每个来回（发包 + 等应答 + USB latency timer）约 1~2 ms。latency_ms 模拟它，
+  同时驱动一个虚拟时钟：下垂按这个时钟算，所以测试是确定性的，不看机器快慢；time.sleep 也照样计入
 - 寄存器表到 86 为止，读过头只回剩下的字节（真机实测：读 80 起 10 个回 7 个）
 - 位置、速度、电流第 15 位是符号位；偏移寄存器 31 同样按第 15 位记符号（真机读到过 34279 = -1511）
 - REBOOT (0x08) 不回包
 """
 import struct
+import time
 
 import feetech
 
@@ -45,6 +51,10 @@ class SimServo:
         self.muted = set()        # 读这些地址不回包，模拟中途掉线
         self.accept_128 = False   # HD-1910 不认 128
         self.support_0b = True
+        self.ignore_offset_writes = False   # 模拟连写偏移都不认的舵机
+        self.offset_adds = True   # 报告位置 = phys + off；False 时 = phys − off（手册没写死，两种都得能跑）
+        self.droop = 0.0          # 扭矩关着时每毫秒往下掉几步；真机颈部实测 0.62
+        self._t = 0.0             # 上次 tick 时的总线虚拟时钟（毫秒）
         self.mute_after_calib = set()   # 校准一做完就把这些地址加进 muted
 
     @property
@@ -52,13 +62,18 @@ class SimServo:
         return self.r[5]
 
     def pos(self):
-        return self.phys + self.off
+        return self.phys + (self.off if self.offset_adds else -self.off)
 
-    def tick(self):
-        """扭矩开着就直接走到目标（模拟器不管动力学）。"""
+    def tick(self, clock_ms=0.0):
+        """扭矩开着就直接走到目标（模拟器不管动力学）；关着就按 droop 往下掉。
+
+        clock_ms 是总线的虚拟时钟，由 SimSerial 按每包延迟和真实 sleep 推进。"""
+        dt_ms, self._t = clock_ms - self._t, clock_ms
         if self.r[40] == 1 and self.goal is not None:
-            self.phys = self.goal - self.off
-        p = self.pos()
+            self.phys = self.goal - (self.off if self.offset_adds else -self.off)
+        elif self.droop:
+            self.phys -= self.droop * dt_ms
+        p = round(self.pos())
         struct.pack_into("<H", self.r, 56, enc15(p))
         struct.pack_into("<H", self.r, 67, enc15(self.goal if self.goal is not None else p))
         struct.pack_into("<H", self.r, 31, enc15(self.off))
@@ -76,18 +91,19 @@ class SimServo:
         # 多字节寄存器落地
         if addr <= 42 < addr + len(data):
             self.goal = feetech.sign15(struct.unpack_from("<H", self.r, 42)[0])
-        if addr <= 31 < addr + len(data):
+        if addr <= 31 < addr + len(data) and not self.ignore_offset_writes:
             self.off = feetech.sign15(struct.unpack_from("<H", self.r, 31)[0])
         if addr <= 40 < addr + len(data) and self.r[40] == 1 and self.goal is None:
             self.goal = self.pos()
 
     def recalibrate(self, value):
-        self.off = value - self.phys
+        # phys 因为下垂是小数，偏移得取整：真舵机的寄存器只能存整数
+        self.off = round((value - self.phys) if self.offset_adds else (self.phys - value))
         self.calibrations += 1
         self.muted |= self.mute_after_calib
 
-    def read(self, addr, n):
-        self.tick()
+    def read(self, addr, n, clock_ms=0.0):
+        self.tick(clock_ms)
         return bytes(self.r[addr:min(addr + n, TABLE_END)])
 
 
@@ -98,6 +114,9 @@ class SimSerial:
         self.timeout = 0.02
         self.servos = {i: SimServo(i, (phys or {}).get(i, 2048)) for i in ids}
         self.rx = bytearray()
+        self.latency_ms = 0.0     # 每个来回多少毫秒；真机 URT-2 约 1~2
+        self.clock = 0.0          # 总线虚拟时钟（毫秒）：每包 +latency，再加上调用方 sleep 掉的真实时间
+        self._wall = time.monotonic()
 
     # ---- 串口接口 ----
     def reset_input_buffer(self):
@@ -133,14 +152,22 @@ class SimSerial:
                 return s
         return None
 
+    def _advance(self):
+        """推进虚拟时钟：一次总线来回的延迟，加上上次之后真实睡掉的时间（代码里的 time.sleep 要算进下垂）。"""
+        now = time.monotonic()
+        self.clock += self.latency_ms + (now - self._wall) * 1000
+        self._wall = now
+        return self.clock
+
     def _reply(self, s, params=b""):
-        s.tick()
+        s.tick(self.clock)
         err = s.r[65]
         length = len(params) + 2
         body = bytes([s.id, length, err]) + bytes(params)
         self.rx += bytes([0xFF, 0xFF]) + body + bytes([(~sum(body)) & 0xFF])
 
     def _handle(self, sid, instr, p):
+        self._advance()
         if instr == feetech.SYNC_WRITE:
             addr, ln = p[0], p[1]
             rest = p[2:]
@@ -153,18 +180,21 @@ class SimSerial:
             addr, ln = p[0], p[1]
             for i in p[2:]:
                 s = self._by_id(i)
-                if s:
-                    self._reply(s, s.read(addr, ln))
+                # alive() 给假 IMU 小板用：模拟"总线处理器还没起来"和"板子彻底不答"
+                if s and addr not in getattr(s, "muted", ()) and getattr(s, "alive", lambda _: True)(self.clock):
+                    self._reply(s, s.read(addr, ln, self.clock))
             return
         s = self._by_id(sid)
         if s is None:
             return
         if instr == feetech.PING:
+            if sid == feetech.BROADCAST or not getattr(s, "alive", lambda _: True)(self.clock):
+                return                                       # 手册：总线上多个设备时不能用广播 PING
             self._reply(s)
         elif instr == feetech.READ:
-            if p[0] in s.muted:
+            if p[0] in s.muted or not getattr(s, "alive", lambda _: True)(self.clock):
                 return
-            self._reply(s, s.read(p[0], p[1]))
+            self._reply(s, s.read(p[0], p[1], self.clock))
         elif instr == feetech.WRITE:
             s.write(p[0], p[1:])
             self._reply(s)                                       # 改 ID 时用新 ID 回

@@ -1,5 +1,18 @@
 # 整机物料清单（BOM）
 
+> **仓库里有四份清单加一份打印说明，各管各的：**
+>
+> | 文档 | 管什么 | 不管什么 |
+> |---|---|---|
+> | **BOM**（就是这份） | **总表**：全部物料、数量（从 MJCF 的 geom 引用数出来的）、成本量级、还没解决的空白 | 具体买哪家、怎么打印 |
+> | [电控采购清单](docs/电控采购清单.md) | 电控件**买哪家**：主控 / 摄像头 / ToF / 电源 / 两块 PCB / 线材，淘宝实链 + 避坑 | 数量依据、机械件 |
+> | [机械采购清单](docs/机械采购清单.md) | 机械件**买哪家**：轴承 / 紧固件 / 耗材，淘宝实链 | 电控件 |
+> | [硬件规格速查](docs/硬件规格速查.md) | **参数**：接口、电压、协议、软件侧必须对齐的值 | 价格和店铺 |
+> | [print/README](print/README.md) | **打印件**：哪个零件打几份、文件名规则、打印参数 | 采购 |
+>
+> 装配用的件号与螺丝对应在 [CAD 仓库](https://github.com/fanhao375/microduck-replica-cad#装配-bom)。
+
+
 **简体中文** · [English](BOM.en.md)
 
 复刻一台 Microduck 需要的全部东西。数量取自上游 `robot_walk.xml` 的 geom 引用计数
@@ -72,7 +85,7 @@
 |---|---|---|---|
 | 主控 | **Radxa Zero 3W** | 1 | 设备树 `compatible = "radxa,zero-3w"`。⚠️ 有多档 RAM/eMMC。官方 2026-08-27 发布页公布 **1 GB / 32 GB**，但 `microduck/` 源码中无佐证（源码本来就不体现板卡 SKU）；**复刻建议 2G/16G**，推算见 [电控采购清单](docs/电控采购清单.md#该买哪个配置)；系统镜像必须带 Rockchip 厂商内核（Armbian 系），否则 NPU 不存在 |
 | 摄像头 | 树莓派 Camera v2（**IMX219**） | 1 | `setup-board.sh` 用 `radxa-zero3-rpi-camera-v2` overlay。⚠️ **装歪了四分之一圈，要软件补偿**：当前代码 `mediad/src/main.rs:82` 的 `--rotate` 默认 **90**，注释原文「the head camera is mounted **a quarter turn off**, and this is the one place that fact is written down」。`media-bringup.md:472` 的 180° 是 **alpha 机**数据。**以代码为准 = 90°** |
-| 深度 | **VL53L8CX** 或 VL53L5CX 模块 | 1 | 固件两款都支持，按 revision ID 自动识别；地址 `0x29` 或 `0x52`；Stemma/Qwiic 接口 |
+| 深度 | **VL53L5CX** 模块（或 L8CX） | 1 | 固件只认这两颗（revision `0x02` / `0x0C`），**L7CX 会被直接拒绝**；推荐 L5CX：板子 15.8 × 10 mm，L8CX 常见板型 33.4 mm 脸壳装不下（[实测](踩坑记录.md#买东西)）；地址 `0x29` 或 `0x52`；Stemma/Qwiic 接口 |
 | 电池 | **索尼 NP-F550**（2S，7.4 V） | 1 | ⚠️ 见下方勘误 |
 | 电池卡座 | NP-F 系列通用卡座 | 1 | 上游只有打印件 `power_support`，**没有触点模型** —— 取电方案需自行解决 |
 | 喇叭 | 小型扬声器 | 1 | `speaker` 网格 ×1；HAT 上有 PAM8406 功放和 Wago 端子 |
