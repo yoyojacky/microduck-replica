@@ -2,6 +2,8 @@
 """从 Microduck 的 MJCF 导出「已装配」的 STL。
 
 上游仓库里的 47 个 STL 都是零件自身坐标系的，直接导进 CAD 会全部堆在原点。
+仅用于上游仿真模型分析，不生成最新实物 CAD 的打印件。
+默认输出 analysis-output/cad-upstream/，不写入主仓模型下载入口。
 本脚本读取 MJCF 的运动学树，把每个网格按 world transform 变换到正确位置，
 再按刚体分组导出，得到可以直接在 CAD / 切片软件里打开的装配体。
 
@@ -57,7 +59,7 @@ def main():
         print(__doc__)
         sys.exit(1)
     root = sys.argv[1]
-    out = sys.argv[2] if len(sys.argv) > 2 else "cad"
+    out = sys.argv[2] if len(sys.argv) > 2 else "analysis-output/cad-upstream"
     os.makedirs(out, exist_ok=True)
 
     path = os.path.join(root, MJCF)

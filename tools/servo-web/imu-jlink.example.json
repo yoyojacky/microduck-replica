@@ -1,0 +1,6 @@
+{
+  "dll": "E:/SEGGER/JLink/JLink_x64.dll",
+  "probe_serial": null,
+  "hz": 20,
+  "resume": false
+}

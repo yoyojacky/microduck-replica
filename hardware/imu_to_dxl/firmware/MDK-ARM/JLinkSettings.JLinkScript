@@ -1,0 +1,13 @@
+// Board bring-up: reduce SWD transfer errors with the present wiring/probe.
+// Keil loads JLinkSettings.JLinkScript from the project directory automatically.
+// These hooks extend the normal device connection and reset sequences.
+int SetupTarget(void) {
+  JLINK_TIF_SetSpeed(100);
+  JLINK_SYS_Report("Microduck: SWD speed set to 100 kHz");
+  return 0;
+}
+
+int AfterResetTarget(void) {
+  JLINK_TIF_SetSpeed(100);
+  return 0;
+}

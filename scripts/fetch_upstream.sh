@@ -14,6 +14,6 @@ mkdir -p upstream && cd upstream
 
 cd ..
 echo ""
-echo "完成。重新生成装配图和 CAD 装配体："
+echo "完成。重新生成上游装配分析图与预览（非实物打印件）："
 echo "  python scripts/render_assembly.py upstream/microduck_rl assembly-drawings"
-echo "  python scripts/export_assembly_stl.py upstream/microduck_rl cad"
+echo "  python scripts/export_assembly_stl.py upstream/microduck_rl analysis-output/cad-upstream"

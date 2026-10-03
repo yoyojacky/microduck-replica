@@ -1,0 +1,82 @@
+[
+  {
+    "bytes": 601994,
+    "path": "Drivers/CMSIS/Device/ST/STM32G0xx/Include/stm32g031xx.h",
+    "sha256": "336a1cdbbb54593c0d78c4c9440914deac58a523021883b7c96a76e7613f0a90"
+  },
+  {
+    "bytes": 7920,
+    "path": "Drivers/CMSIS/Device/ST/STM32G0xx/Include/stm32g0xx.h",
+    "sha256": "f67dcdf72b69776ef2308a84090cd3ea87affc83470c225d39377494fac7c296"
+  },
+  {
+    "bytes": 2227,
+    "path": "Drivers/CMSIS/Device/ST/STM32G0xx/Include/system_stm32g0xx.h",
+    "sha256": "20ee999e4431472a7c351e2412537aa0ef7f5f5e499a21a92c1d4cc21f84ebf1"
+  },
+  {
+    "bytes": 11357,
+    "path": "Drivers/CMSIS/Device/ST/STM32G0xx/LICENSE.md",
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  },
+  {
+    "bytes": 11255,
+    "path": "Drivers/CMSIS/Device/ST/STM32G0xx/Source/system_stm32g0xx.c",
+    "sha256": "d95e3aef373a5842d9166e2e3670991b98249082f989e2eea60151bc44588841"
+  },
+  {
+    "bytes": 20706,
+    "path": "Drivers/CMSIS/Include/cmsis_armclang.h",
+    "sha256": "f7361b36a56909eff2b1cecd778443fd9da21eaa86878dabf5e8e216f6bfea29"
+  },
+  {
+    "bytes": 9265,
+    "path": "Drivers/CMSIS/Include/cmsis_compiler.h",
+    "sha256": "8932e7ac5c9a13b199c64f25b3dc67ebf0a877b33dbcf434d4e1b78e625f57c5"
+  },
+  {
+    "bytes": 1936,
+    "path": "Drivers/CMSIS/Include/cmsis_version.h",
+    "sha256": "3b9195c5373a2a4dbfd968b083b3d7f5f446f9ec2e126f75928ac1ff4356b91e"
+  },
+  {
+    "bytes": 50066,
+    "path": "Drivers/CMSIS/Include/core_cm0plus.h",
+    "sha256": "3a01ca99a202b3c2acf476e9523181c9f6ddb027fa8e097c0be0037b213c8f23"
+  },
+  {
+    "bytes": 11458,
+    "path": "Drivers/CMSIS/Include/m-profile/armv7m_mpu.h",
+    "sha256": "44294dc3e331deb8daae269793e579cc10920a9b88d133bbaf3a7af65d29f9e4"
+  },
+  {
+    "bytes": 24869,
+    "path": "Drivers/CMSIS/Include/m-profile/cmsis_armclang_m.h",
+    "sha256": "d7425ea4ca4577e557f9ea155006f5506db1e9f6580442d56d6417549ad53b92"
+  },
+  {
+    "bytes": 11357,
+    "path": "Drivers/CMSIS/LICENSE",
+    "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+  },
+  {
+    "bytes": 1518,
+    "path": "Drivers/LSM6DSV16X/LICENSE",
+    "sha256": "b54f36a43cf9b8f6292c8f0f3b4c267ebd59859587e0152c94305bc81dda68bc"
+  },
+  {
+    "bytes": 207367,
+    "path": "Drivers/LSM6DSV16X/lsm6dsv16x_reg.c",
+    "sha256": "cd2684780702d544e1c32a5fbac4698ae56a15c3f7db4d2786b5d9a1f22b82a6"
+  },
+  {
+    "bytes": 289216,
+    "path": "Drivers/LSM6DSV16X/lsm6dsv16x_reg.h",
+    "sha256": "6c0965c7acc93e00c7e9a60ab67af1d5eefd6cca255c2d0557cf0141086da591"
+  },
+  {
+    "bytes": 9787,
+    "path": "Startup/startup_stm32g031xx.s",
+    "sha256": "5552b01d0e2ad95f9f41ea2b81ff0fe72c1898e147d8c636bcf9650cf27dd18a"
+  }
+]

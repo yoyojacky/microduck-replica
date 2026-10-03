@@ -1,0 +1,10 @@
+{
+  "repo": "STMicroelectronics/lsm6dsv16x-pid",
+  "branch": "main",
+  "commit": "2808e5cd6b85f91b66758e1dd0faab5f043aba07",
+  "commit_date": "2026-08-25T12:13:29Z",
+  "downloaded_at": "2026-09-08T14:11:54.4661308Z",
+  "source_url": "https://github.com/STMicroelectronics/lsm6dsv16x-pid",
+  "archive_sha256": "1B61C840917D00E9AA73424C1C77A53122B2E71CC02850172DB8669A349E2E11",
+  "files": 12
+}

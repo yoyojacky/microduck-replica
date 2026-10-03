@@ -1,0 +1,15 @@
+; STM32G031F8P6: 64 KiB flash, 8 KiB SRAM.
+; Reserve the highest 2 KiB for the MSP stack. No dynamic allocation.
+LR_IROM1 0x08000000 0x00010000 {
+  ER_IROM1 0x08000000 0x00010000 {
+    startup_stm32g031xx.o (RESET, +First)
+    *(InRoot$$Sections)
+    .ANY (+RO)
+  }
+  RW_IRAM1 0x20000000 0x00001800 {
+    .ANY (+RW +ZI)
+  }
+  ARM_LIB_STACK 0x20001800 UNINIT 0x00000800 {
+    startup_stm32g031xx.o (STACK)
+  }
+}

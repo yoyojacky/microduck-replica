@@ -1,0 +1,18 @@
+# Keep one reviewed flash image; all other compiler/test products stay local.
+Build/*
+!Build/imu_to_dxl.hex
+.venv/
+__pycache__/
+*.py[cod]
+*.o
+*.obj
+*.exe
+*.map
+*.bin
+*.axf
+*.uvoptx
+*.uvguix.*
+JLinkLog.txt
+JLinkSettings.ini
+MDK-ARM/DebugConfig/
+MDK-ARM/build.log

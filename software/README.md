@@ -1,8 +1,25 @@
 # software · 软件适配
 
-官方运行时 [`pollen-robotics/microduck`](https://github.com/pollen-robotics/microduck) 是照 Dynamixel XL330 写的，本仓库主线用飞特 HD-1910，软件要改。这个目录放的是**分析和方案**，实现的代码在 fork 出来的分支里。
+> 本目录保留训练所需的上游仿真模型，**不是最新实物结构件的打印来源**。模型下载统一到 [microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad)；引入飞特舵机参数不等于已更新 CAD 几何、质量和惯量。
 
-## 代码在哪
+官方运行时 [`pollen-robotics/microduck`](https://github.com/pollen-robotics/microduck) 是照 Dynamixel XL330 写的，本仓库主线用飞特 HD-1910，软件要改。这个目录放**训练工程、分析和方案**；Rust 运行时适配代码仍在下方所列的 fork 分支里。
+
+## HD1910 仿真训练
+
+**[`training/`](training/)** 包含完整 Python 训练工程：模型、LuwuDynamics 的 1910 M6 参数、
+HD1910 任务配置、飞特控制器初始化适配、依赖锁文件和测试。克隆本仓库即可取得，
+不需要再下载 `microduck_rl` 分支。
+
+[快速开始](training/README.md) · [运行说明与初始化问题解释](training/docs/hd1910-baseline.md) ·
+[来源和许可证](training/UPSTREAM.md)。当前是仿真接入基线，尚未完成本机实测步态训练。
+
+## IMU 裸板调试
+
+STM32G031 + LSM6DSV16X 固件与硬件资料放在 [`hardware/imu_to_dxl/firmware/`](../hardware/imu_to_dxl/firmware/)。姿态显示并入 [`tools/servo-web/`](../tools/servo-web/)：使用 `python server.py --port COM5 --imu-jlink imu-jlink.json`，同一个模型同时接收舵机关节角和 J-Link 的躯干姿态；只有裸板时可用 `--fake` 代替串口参数。
+
+**范围：固件与模拟验证、SWD 台架观察。** 附带 0.2.0 源码已实现飞特 SCS/STS 协议、ID 200、地址 56 的 15 字节块及同步读排队；主机测试与模拟总线验收记录见 [`VALIDATION.md`](../hardware/imu_to_dxl/firmware/VALIDATION.md)。实板已有烧录及 IMU 观察记录，但真实混合总线、响应/释放时序和整机运行时验收仍未完成。此前“仍是 Dynamixel 基线、尚未实现契约”的说明已过时，不能与“真总线尚未验收”混为一谈。
+
+## Rust 运行时代码在哪
 
 > ### 👉 [`fanhao375/microduck` · `feetech` 分支](https://github.com/fanhao375/microduck/tree/feetech)
 >

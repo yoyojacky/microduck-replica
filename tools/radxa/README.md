@@ -1,17 +1,23 @@
 # Radxa Zero 3W · 做一张能直接开机的 Armbian 卡
 
 配合 [不打 HAT · 第 1 步](../../docs/不打HAT.md#第-1-步--主控点亮什么都别接) 用。
-**V1.12 板（2024-11 以后买的，WiFi 是 AIC8800）用 Armbian 官方镜像直接烧是起不来的**：灯双闪、永远进不了系统。
-原因是 Armbian 给这块板配的主线 U-Boot（内存初始化固件 2024-01 的 v1.21）带不起新板，换成瑞莎自家的引导程序就好。
-这个目录把换引导、写 WiFi、开串口、开 USB 控制台全打进镜像里，烧完插上就能 ssh。
+此前本机 V1.12 板（AIC8800 Wi-Fi）使用所测 Armbian 原版镜像启动失败，经引导程序对照和替换后解决；不同批次见镜像说明。**双闪本身不是故障码**，2026-09-28 官方 B1 在正常联网和采集时也使用 `heartbeat` 双闪。
+此前排查指向 Armbian 所用主线 U-Boot / 内存初始化固件与本机的兼容性，换用瑞莎引导后能够启动。
+这个目录把换引导、写 WiFi、配置 DHCP、开串口、开 USB 控制台打进镜像里，供首次启动联网使用。
+
+2026-09-28 已修正做卡脚本遗漏 `wlan0` DHCP 的问题；[9 月 20 日 Release](https://github.com/fanhao375/microduck-replica/releases/tag/radxa-zero3w-armbian-20260920) 的镜像和校验值仍为旧文件，没有包含此修复。已经烧录旧镜像的用户按[联网步骤](镜像使用说明.md#4-连-wifi)补配置即可，不必仅为此重刷；卡内的旧联网提示也以这篇说明为准。本机修复后的个人镜像已实测取得 DHCP 地址并通过 SSH 登录；这不代表所有板卡和路由器均已验证，见[实测记录](联网与HAT调试记录-20260928.md)。
 
 **不想自己做卡？** [release 里有做好的镜像](https://github.com/fanhao375/microduck-replica/releases)（不带 WiFi，插 USB 当串口进去连），
-烧完就能开机，用法见[镜像使用说明](镜像使用说明.md)。板子不是这一批（比如 V1.12J、WiFi 换成移远 FSK960K）也在那篇里说了怎么办。
+首次配置和板卡批次差异见[镜像使用说明](镜像使用说明.md)。更换电脑不影响系统；更换 WiFi 需重新填写连接信息，不必重刷。
+
+**首次登录勘误（2026-09-29）：`root / 1234`。** 完成 Armbian 向导后才创建 `duck / duck1234` 并改 root 密码；`card.conf` 中的用户名密码是向导预设，不是首次认证凭据。请随即改掉默认密码。新的 [20260929 候选镜像](https://github.com/fanhao375/microduck-replica/releases/tag/radxa-zero3w-armbian-20260929)预置 DHCP、更新卡内说明并移除预生成 SSH 主机密钥，经过离线检查，尚未烧卡实测。旧卡不必重刷，按指南修复 DHCP 和重建 SSH 主机密钥即可。
 
 | 文件 | 干什么 |
 |---|---|
-| `card.conf` | 改 WiFi 名 / 密码，用户名密码默认 `duck` / `duck1234`；国内要装官方软件时填一个 HTTP 代理。**WiFi 两行留空 = 公开镜像模式**，不写任何网络配置 |
+| `card.conf` | 改 WiFi 名 / 密码；首次 `root / 1234` 登录后，向导默认创建 `duck` / `duck1234`。国内要装官方软件时可填 HTTP 代理。**WiFi 两行留空 = 公开镜像模式**，不写 WiFi 认证信息，仍预置 DHCP |
 | `镜像使用说明.md` | 给 release 里那张镜像用的：烧卡、USB 串口登录、连 WiFi、换引导救别的批次的板子 |
+| [摄像头调试记录-20260928.md](摄像头调试记录-20260928.md) | 排线接线参考图、官方 B1 对照结果、IMX219 识别与限量抓帧命令；原 Armbian 正确接线复测待完成 |
+| [联网与HAT调试记录-20260928.md](联网与HAT调试记录-20260928.md) | DHCP 修复后的主板登录、HAT 舵机只读通讯结果和待排查项 |
 | `1-做卡.ps1` | Windows 右键「使用 PowerShell 运行」，选下载的 `.img.xz`，出一个 `xxx-鸭子卡.img`，Rufus 烧它 |
 | `build-armbian-card.sh` | 实际干活的脚本，Linux / WSL 里 `sudo bash build-armbian-card.sh xxx.img.xz card.conf` |
 
@@ -23,11 +29,12 @@
 
 1. 扇区 64 写 `idbloader.img`，扇区 16384 写 `u-boot.itb`（瑞莎 u-boot-rk2410 2017.09-64，DDR v1.25，BL31 v1.46）
 2. `/boot/extlinux/extlinux.conf`：瑞莎 U-Boot 认 extlinux 不认 Armbian 的 boot.scr；挂 `uart2-m0`（舵机串口 `/dev/ttyS2`）和 `dwc3-peripheral`（OTG 口当 USB 串口）两个 overlay，内核控制台放 tty1
-3. 首次开机预设 `/root/.not_logged_in_yet`（用户、密码、时区、locale）+ Armbian 标准写法的 `/etc/netplan/30-wifis-dhcp.yaml`，官方 `migrate-network.sh` 能接手
+3. 首次登录向导预设 `/root/.not_logged_in_yet`（用户、密码、时区、locale），在认证后才应用；`wpa_supplicant-wlan0.conf` 配置 WiFi 认证，`/etc/systemd/network/25-wlan0.network` 配置无线 DHCP；移除底包预生成的 SSH 主机密钥，保留原系统的首次启动生成服务
 4. `g_serial` + `serial-getty@ttyGS0`：板子插电脑多出一个 COM 口，115200，root 能登
 5. mask 掉 `serial-getty@ttyS2` / `ttyFIQ0`，登录控制台不占舵机串口
 
-烧完开机 2～3 分钟，路由器里找 `radxa-zero3`，`ssh duck@IP`。之后按 Pollen 官方
-[install-dev.md](https://github.com/pollen-robotics/microduck/blob/main/docs/robot/install-dev.md)
-跑 `setup-board.sh` → `migrate-network.sh` → 重启 → 再各跑一次 → `install.sh`。
-它们会改 `armbianEnv.txt`，在这张卡上不生效（extlinux 说了算），但脚本自己检查的项都能过。
+完成首次登录向导和网络配置后，路由器里找 `radxa-zero3`，用 `ssh duck@IP` 登录。基础镜像不含完整机器人控制环境，不能仅凭联网就认为网页或舵机控制已经可用。
+
+后续安装可参考 Pollen 官方 [install-dev.md](https://github.com/pollen-robotics/microduck/blob/main/docs/robot/install-dev.md)，但**本镜像不能直接照搬 `migrate-network.sh` → 重启的步骤**。当前检查的上游迁移脚本从 netplan 导入无线凭据，不会读取本镜像的 `wpa_supplicant-wlan0.conf`，也不会自动退出独立的 `wpa_supplicant@wlan0` / `25-wlan0.network` 配置。应先保留现有联网方式，待适配凭据导入、旧服务退出和失联恢复后再迁移，避免重启失联。
+
+安装脚本对 `armbianEnv.txt` 的修改也需核对到实际启动使用的 `extlinux.conf`，不能只依据脚本的检查结果判断硬件已配置完成。

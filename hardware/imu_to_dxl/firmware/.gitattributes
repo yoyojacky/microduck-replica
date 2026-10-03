@@ -1,0 +1,6 @@
+*.cmd text eol=crlf
+*.py text eol=lf
+*.md text eol=lf
+*.hex -text
+Drivers/** linguist-vendored=true
+Build/* linguist-generated=true

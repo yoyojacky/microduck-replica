@@ -6,6 +6,7 @@
 改了 feetech.py 或 server.py 里跟舵机打交道的地方，先跑这个再上真机。
 不碰真舵机，不碰仓库里的 poses/ 和 calib/（用临时目录）。
 """
+import json
 import os
 import shutil
 import sys
@@ -31,6 +32,9 @@ def main():
     server.CALIB_DIR = os.path.join(tmp, "calib")
     server.POSES_DIR = os.path.join(tmp, "poses")
     server.LOG_DIR = os.path.join(tmp, "logs")
+    server.DIRS_FILE = os.path.join(tmp, "directions.json")   # 跟实机一致：15 颗全 −1；不读仓库里的文件
+    with open(server.DIRS_FILE, "w", encoding="utf-8") as f:
+        json.dump({str(i): -1 for i in IDS}, f)
     os.makedirs(server.POSES_DIR)
     # 摆在一个离 2048 挺远的姿势上
     start = {i: 2048 + (k * 37 - 250) for k, i in enumerate(IDS)}
@@ -91,6 +95,63 @@ def main():
     worst = max(abs(after[i] - want[i]) for i in IDS)
     check(worst <= 2, f"撤销后姿态里的数字仍然指向存它时那个物理姿势（最大差 {worst} 步）")
     server.delete_pose([x for x in server.list_poses() if x["name"] == "校准后存的"][0]["file"])
+
+    print("按官方折叠校准：目标 = 官方 FOLD 角度 × ±，校完零点是官方 2048，存的姿态跟着换算")
+    fold_ids = IDS                                      # 腿按官方折叠、头颈摆正，15 颗一起标
+    H({"op": "save_pose", "name": "折叠前存的"})
+    saved_before = [x for x in server.list_poses() if x["name"] == "折叠前存的"][0]["goals"]
+    phys = {i: sv[i].phys for i in IDS}
+    _, want = server.official_targets("@official:FOLD")
+    r = H({"op": "calib_mid_all", "ids": fold_ids, "ref": "@official:FOLD"})
+    st = server.BUS.states(IDS)
+    check(sorted(r["ok"]) == sorted(fold_ids), f"15 颗都成功（{len(r['ok'])}，失败 {r['bad']}）")
+    check(all(want[i] == 2048 for i in (20, 21, 24, 30, 31, 32, 33, 34, 10, 11, 14)),
+          "膝、髋 pitch 以外（含头颈摆正、嘴闭上）的目标都是 2048")
+    check(all(abs(st[i]["pos"] - want[i]) <= 1 for i in fold_ids),
+          "读数变成官方折叠的值（" + " ".join(f"{i}→{want[i]}" for i in fold_ids) + "）")
+    check(all(sv[i].phys == phys[i] for i in IDS), "物理位置没动")
+    check((want[22], want[23], want[12], want[13]) == (1025, 1025, 3071, 3071),
+          f"± 全 −1：左髋 pitch / 左膝写 1025，右髋 pitch / 右膝写 3071（{want[22]} {want[23]} {want[12]} {want[13]}）")
+    saved_after = [x for x in server.list_poses() if x["name"] == "折叠前存的"][0]["goals"]
+    check(all(abs((saved_after[i] - saved_before[i]) - (st[i]["pos"] - start_fold)) <= 1
+              for i, start_fold in ((i, saved_before[i]) for i in fold_ids)),
+          "折叠前存的姿态跟着换算（同一个物理姿势，新读数）")
+    r = H({"op": "calib_undo"})
+    check(len(r["ok"]) == 15 and all(sv[i].phys == phys[i] for i in IDS), "折叠校准也能撤销，关节不动")
+    check([x for x in server.list_poses() if x["name"] == "折叠前存的"][0]["goals"] == saved_before, "撤销后姿态换算回原值")
+    server.delete_pose([x for x in server.list_poses() if x["name"] == "折叠前存的"][0]["file"])
+
+    print("扭矩关着按官方折叠校准（实际用法：手摆），校完用手展开，再开扭矩不能跳")
+    H({"op": "torque", "on": 0})
+    for i in IDS:                                       # 手摆成校准用折叠，零点没校准，各差几步；右膝差 150°（装的时候转了）
+        sv[i].phys = want[i] - sv[i].off + (1700 if i == 13 else 5)
+    plan = H({"op": "calib_plan", "ids": IDS, "ref": "@official:FOLD", "for": "all"})
+    rows = {x["id"]: x for x in plan["rows"]}
+    check(rows[22]["target"] == 1025 and rows[22]["diff_deg"] == -0.4 and rows[13]["diff_deg"] == -149.4,
+          f"预览：每颗现在 → 目标、差几度（#22 {rows[22]['pos']}→{rows[22]['target']} {rows[22]['diff_deg']}°，#13 {rows[13]['diff_deg']}°）")
+    phys = {i: sv[i].phys for i in IDS}
+    r = H({"op": "calib_mid_all", "ids": IDS, "ref": "@official:FOLD"})
+    st = server.BUS.states(IDS)
+    check(sorted(r["ok"]) == sorted(IDS) and list(r["big"]) == ["13"], f"15 颗成功，差得多的 #13 照常校、单独标出来（{r['big']}）")
+    check(all(abs(st[i]["pos"] - want[i]) <= 1 for i in IDS), "读数变成校准用折叠的值")
+    check(all(sv[i].r[40] == 0 for i in IDS), "扭矩原来关着，校完还关着")
+    check(all(sv[i].goal == st[i]["pos"] for i in IDS), "目标寄存器 = 当前读数")
+    check(all(sv[i].phys == phys[i] for i in IDS), "关节没动")
+    for i in IDS:                                       # 用手把鸭子展开
+        sv[i].phys = 2048 - sv[i].off
+    r = H({"op": "torque", "on": 1})
+    server.BUS.states(IDS)
+    check(len(r["aligned"]) == 15 and not r["bad"], f"开扭矩前 15 颗目标都对准了当前位置（{len(r['aligned'])}）")
+    check(all(sv[i].phys == 2048 - sv[i].off for i in IDS), "开扭矩后关节一步没动，不会甩回折叠")
+    H({"op": "calib_undo"})
+
+    print("扭矩关着发了姿势，再开扭矩也不能跳")
+    H({"op": "torque", "ids": [24], "on": 0})
+    H({"op": "goals", "goals": {"24": 2800}})          # 关着发的目标留在舵机里
+    sv[24].phys = 1900 - sv[24].off
+    H({"op": "torque", "ids": [24], "on": 1})
+    server.BUS.states([24])
+    check(sv[24].phys == 1900 - sv[24].off and sv[24].goal == 1900, "开扭矩停在原地（目标改成了 1900，不是 2800）")
 
     print("按姿态校准：鸭子缩着放好，读数校回「缩」里存的值")
     H({"op": "save_pose", "name": "缩"})

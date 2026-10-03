@@ -1,16 +1,11 @@
-# 这个目录是什么
+# CAD 与模型统一到配套仓库
 
-**已应用世界变换的 STL** —— 导入 CAD 就是装好的样子，不用自己摆位置。15 个部件 + 整机单文件 + 零件对照表。
-单位毫米。能看、能量、能切片，**但改不动**。
+**请到 [fanhao375/microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad) 下载结构件、装配体、SolidWorks / STEP 源文件和打印工程。**
 
-## 你可能在找的不在这里
+该仓库是模型的统一维护入口，包含版本选择、装配 BOM、组件图及安装说明。截至 2026-09-28，飞特 HD-1910 为 [v2.1](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v2.1)，XL330 为 [v1.1](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v1.1)。下载前核对舵机类型和具体附件版本；打印注意事项见 [print/README](../print/README.md)。
 
-| 要什么 | 去哪 |
-|---|---|
-| **直接打印**，不想看图 | 🖨️ [拓竹 MakerWorld · microduck 飞特版](https://makerworld.com.cn/zh/models/2963569-microduck#profileId-3478428) 一键切片；或下 [Bambu Studio 工程 `.3mf`](https://github.com/fanhao375/microduck-replica-cad/tree/master/打印)（5 盘排好的，4.9 MB） |
-| **可编辑的 SolidWorks 源文件** | 📦 [microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad) 的 **Releases 页**（右边栏，**不在文件列表里**）。飞特 HD-1910 版 v2.0，原版 v1.0 |
-| 单个零件的 STL、要打几份 | [`../print/`](../print/) |
-| 装配步骤 | [装配安装说明书 PDF](https://github.com/fanhao375/microduck-replica-cad/blob/master/安装说明书/microduck装配安装说明书.pdf)（21 页） |
+本目录以前的 16 个 STL 是从上游 MJCF 生成的装配预览，未同步最新实物 CAD，已于 2026-09-28 移除。需要追溯时查看 Git 历史；最新文件统一从配套仓库获取。
 
-> 为什么源文件不放 git 里：374 MB 的 SolidWorks 二进制，git 存它不能 diff 只能堆，改三次仓库就 1 GB 而且删不掉。
-> Releases 附件不计入仓库体积。
+本仓 `assembly-drawings/` 的分析渲染、训练模型和网页调试模型仍有上游几何，不应作为最新结构件的加工或打印依据。[导出脚本](../scripts/export_assembly_stl.py)仅供上游模型分析，默认输出到被忽略的 `analysis-output/cad-upstream/`。
+
+**English:** CAD assemblies, mechanical parts and print files now have one maintained source: [microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad). The old upstream assembly-preview STLs were removed from this directory. Simulation and visualization meshes retained elsewhere are not manufacturing files.

@@ -2,3 +2,8 @@
 calib/
 logs/
 poses/.trash/
+imu-jlink.json
+imu-jlink.local.json
+.venv/
+.pytest_cache/
+__pycache__/

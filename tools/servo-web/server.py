@@ -12,8 +12,12 @@ import argparse
 import asyncio
 import contextlib
 import json
+import logging
+import math
+from pathlib import Path
 import os
 import struct
+import tempfile
 import threading
 import time
 import traceback
@@ -30,7 +34,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # 调试台版本。改了前端或后端就加一：index.html 里的 PAGE_VERSION 要跟这里一样，
 # 页面连上后会比对，不一样就提示"页面是旧的，Ctrl+F5"。改动记在 README 的「版本」一节。
-VERSION = "0.9.1"
+VERSION = "0.15.4"
 DEFAULT_IDS = "20-24,30-34,10-14"
 JOINT_NAMES = {
     20: "left_hip_yaw", 21: "left_hip_roll", 22: "left_hip_pitch", 23: "left_knee", 24: "left_ankle",
@@ -54,45 +58,92 @@ def parse_ids(text):
 
 
 class FakeBus:
-    """没舵机时的替身：位置一阶跟随目标，别的字段编个像样的数。"""
+    """没舵机时的替身（模拟模式）：虚拟舵机按真舵机的速度 / 加速度寄存器走梯形曲线到目标，
+    所以姿势、滑块、序列、灵动在 3D 里的快慢跟真机一样。扭矩默认开，没接串口也能直接看它动；
+    扭矩关了就停在原地（没有重力，不会往下掉）。"""
+
+    MAX_SPEED = 3000                  # 步/秒：HD-1910 满速约这么多，跟 MAX_SPEED_REG 一致
+    ACC_UNIT = 8.7 * 4096 / 360       # 寄存器 41 一个单位 = 8.7°/s²，换成 步/s²
+    ACC_MAX = 254 * ACC_UNIT          # 41 写 0 = 不限加速度，按最大算
 
     def __init__(self, ids):
-        self.pos = {i: 2048 for i in ids}
+        self.pos = {i: 2048.0 for i in ids}
+        self.vel = {i: 0.0 for i in ids}
         self.goal = {i: 2048 for i in ids}
-        self.torque = {i: 0 for i in ids}
+        self.speed_reg = {i: 0 for i in ids}   # 46：0 = 不限速
+        self.acc_reg = {i: 0 for i in ids}     # 41：0 = 不限加速度
+        self.torque = {i: 1 for i in ids}
         self.offset = {i: 0 for i in ids}
         self.locked = {i: 1 for i in ids}   # 出厂锁着
         self.regs = {}                      # 其它寄存器随便写随便读，(id, 地址) -> 值
         self.stats = {"tx": 0, "rx_ok": 0, "timeout": 0, "bad_checksum": 0, "bad_id": 0}
+        self.imu200 = None                  # 模拟 IMU 时挂一个 imu_bus.FakeImu200，答 ID 200
+        self._t = time.monotonic()
+
+    def _advance(self):
+        """按墙钟推进每颗虚拟舵机：朝目标加速，离目标近了按 v² = 2·a·d 减速，跟舵机自己的梯形曲线一样。
+        写寄存器之前先推进一次：不然上次读到这次写之间的时间，会按新目标补走。"""
+        now = time.monotonic()
+        dt, self._t = min(0.2, now - self._t), now
+        if dt <= 0:
+            return
+        for i in self.pos:
+            if not self.torque[i]:
+                self.vel[i] = 0.0
+                continue
+            err = self.goal[i] - self.pos[i]
+            if abs(err) < 0.5 and abs(self.vel[i]) < 1:
+                self.pos[i], self.vel[i] = float(self.goal[i]), 0.0
+                continue
+            limit = self.speed_reg[i] * SPEED_UNIT
+            vmax = limit if 0 < limit < self.MAX_SPEED else self.MAX_SPEED
+            amax = self.acc_reg[i] * self.ACC_UNIT if self.acc_reg[i] else self.ACC_MAX
+            want = math.copysign(min(vmax, math.sqrt(2 * amax * abs(err))), err)
+            dv = max(-amax * dt, min(amax * dt, want - self.vel[i]))
+            self.vel[i] += dv
+            step = self.vel[i] * dt
+            if step * err > 0 and abs(step) >= abs(err):   # 朝着目标走、这一步就到：停在目标上。背着目标（刚换向）不算
+                self.pos[i], self.vel[i] = float(self.goal[i]), 0.0
+            else:
+                self.pos[i] += step
 
     def ping(self, sid):
-        return 0 if sid in self.pos else None
+        return 0 if sid in self.pos or (sid == 200 and self.imu200 is not None) else None
 
     def states(self, ids):
+        self._advance()
         out = {}
         for i in ids:
             if i not in self.pos:
                 out[i] = None
                 continue
-            if self.torque[i]:
-                self.pos[i] += int((self.goal[i] - self.pos[i]) * 0.3)
-            out[i] = {"err": 0, "pos": self.pos[i], "speed": 0, "load": 0, "volt": 7.9, "temp": 31,
-                      "status": 0, "moving": int(abs(self.goal[i] - self.pos[i]) > 2), "goal": self.goal[i],
-                      "current_ma": 0.0, "status_text": ""}
+            pos = int(round(self.pos[i]))
+            out[i] = {"err": 0, "pos": pos, "speed": int(round(self.vel[i])), "load": 0, "volt": 7.9, "temp": 31,
+                      "status": 0, "moving": int(abs(self.goal[i] - pos) > 2 or abs(self.vel[i]) > 1),
+                      "goal": self.goal[i], "current_ma": 0.0, "status_text": ""}
         self.stats["tx"] += 1
         self.stats["rx_ok"] += len(ids)
         return out
 
     def write_u16(self, sid, addr, v):
-        self.regs[(sid, addr)] = v & 0xFFFF
+        # 42 目标、46 速度、31 偏移跟真舵机一样是符号-幅值（BIT15 = 负），server 用 enc_sm 编好再写
+        self._advance()
+        v &= 0xFFFF
+        self.regs[(sid, addr)] = v
         if addr == 42:
-            self.goal[sid] = v
-        if addr == 31:
-            self.pos[sid] += v - self.offset[sid]
-            self.offset[sid] = v
+            self.goal[sid] = feetech.sign15(v)
+        elif addr == 46:
+            self.speed_reg[sid] = v & 0x7FFF
+        elif addr == 31:
+            off = feetech.sign15(v)
+            self.pos[sid] += off - self.offset[sid]       # 读数 = 原始 + 偏移（OFFSET_SIGN = +1）
+            self.offset[sid] = off
         return 0
 
     def write_u8(self, sid, addr, v):
+        self._advance()
+        if addr == 41:
+            self.acc_reg[sid] = v & 0xFF
         if addr == 55:
             self.locked[sid] = 1 if v else 0
         elif addr != 40:
@@ -102,32 +153,52 @@ class FakeBus:
         return 0
 
     def calibrate_to(self, sid, value=None):
+        self._advance()
         value = 2048 if value is None else value
-        self.offset[sid] += value - self.pos[sid]
-        self.pos[sid] = value
+        self.offset[sid] += value - int(round(self.pos[sid]))
+        self.pos[sid], self.vel[sid] = float(value), 0.0
         return 0
 
     def read_u8(self, sid, addr):
         return {40: self.torque[sid], 55: self.locked[sid]}.get(addr, self.regs.get((sid, addr), 0))
 
     def read_u16(self, sid, addr):
-        return {31: self.offset[sid], 56: self.pos[sid], 42: self.goal[sid]}.get(addr, self.regs.get((sid, addr), 0))
+        self._advance()
+        return {31: enc_sm(self.offset[sid]), 56: enc_sm(int(round(self.pos[sid]))),
+                42: enc_sm(self.goal[sid])}.get(addr, self.regs.get((sid, addr), 0))
 
     def sync_write(self, addr, length, id_values):
+        self._advance()
         for sid, data in id_values:
+            if sid not in self.pos:
+                continue
             if addr == 42:
-                self.goal[sid] = struct.unpack("<H", bytes(data[:2]))[0]
-            if addr == 41 and length >= 3:   # 加速度 + 目标位置 + 时间 + 速度
-                self.goal[sid] = struct.unpack("<H", bytes(data[1:3]))[0]
+                self.goal[sid] = feetech.sign15(struct.unpack("<H", bytes(data[:2]))[0])
+            if addr == 41:                   # 加速度（+ 目标位置 + 时间 + 速度）
+                self.acc_reg[sid] = data[0]
+                if length >= 3:
+                    self.goal[sid] = feetech.sign15(struct.unpack("<H", bytes(data[1:3]))[0])
+                if length >= 7:
+                    self.speed_reg[sid] = struct.unpack("<H", bytes(data[5:7]))[0] & 0x7FFF   # 符号-幅值，取幅值
+            if addr == 46:
+                self.speed_reg[sid] = struct.unpack("<H", bytes(data[:2]))[0] & 0x7FFF
             if addr == 40:
                 self.torque[sid] = data[0]
 
     def sync_read(self, ids, addr, n):
-        return {i: (0, bytes(n)) if i in self.pos else None for i in ids}
+        out = {i: (0, bytes([self.torque[i]]) + bytes(n - 1) if addr == 40 else bytes(n)) if i in self.pos else None
+               for i in ids}
+        imu = self.imu200                    # 页面随时可能拔掉虚拟小板：取一次，别判断完再读时变成 None
+        if imu is not None and 200 in out and addr == 56 and n == 15:
+            out[200] = (0, imu.block())
+        return out
 
     def dump(self, sid):
         raw = [0] * feetech.DUMP_END
         raw[5], raw[8], raw[21], raw[22], raw[33], raw[55] = sid, 1, 32, 32, 4, self.locked.get(sid, 1)
+        if sid in self.pos:
+            off, pos = enc_sm(self.offset[sid]), enc_sm(int(round(self.pos[sid])))
+            raw[31], raw[32], raw[40], raw[56], raw[57] = off & 0xFF, off >> 8, self.torque[sid], pos & 0xFF, pos >> 8
         rows = [{"addr": a, "name": feetech.REGISTERS[a][0], "area": feetech.REGISTERS[a][2],
                  "size": feetech.REGISTERS[a][1], "value": raw[a]} for a in sorted(feetech.REGISTERS)]
         return {"rows": rows, "raw": raw}
@@ -149,9 +220,14 @@ class FakeBus:
         return 0
 
     def set_id(self, old, new):
-        self.pos[new] = self.pos.pop(old, 2048)
+        self.pos[new] = self.pos.pop(old, 2048.0)
+        self.vel[new] = self.vel.pop(old, 0.0)
         self.goal[new] = self.goal.pop(old, 2048)
-        self.torque[new] = self.torque.pop(old, 0)
+        self.speed_reg[new] = self.speed_reg.pop(old, 0)
+        self.acc_reg[new] = self.acc_reg.pop(old, 0)
+        self.torque[new] = self.torque.pop(old, 1)
+        self.offset[new] = self.offset.pop(old, 0)
+        self.locked[new] = self.locked.pop(old, 1)
         return True
 
     def close(self):
@@ -164,29 +240,32 @@ BAUD = 1_000_000
 IDS = []
 PRESENT = []
 CLIENTS = set()
+IMU_SERVICE = None  # 可选 IMU 读取器（J-Link DLL 或 pyOCD）；与舵机状态共用 /ws，不接受网页控制探针
 LOG = []           # [{"n": 序号, "t": "时:分:秒", "cat": 分类, "level": info/warn/error, "msg": 正文}]
 LOG_N = 0
 LOG_DIR = os.path.join(HERE, "logs")
-LOG_CATS = ["系统", "总线", "运动", "校准", "寄存器", "姿态", "方向"]   # 页面自己还有一类「页面」
+LOG_CATS = ["系统", "总线", "运动", "校准", "寄存器", "姿态", "方向", "IMU"]   # 页面自己还有一类「页面」
 LEVEL_TAG = {"info": "", "warn": "[警告]", "error": "[错误]", "debug": "[调试]"}
 _log_io = threading.Lock()
-STREAM_HZ = 10
+STREAM_HZ = 50
+FAKE_STREAM_HZ = 30    # 模拟模式不占总线，推快一点，3D 动起来顺
 SPEED_UNIT = 1.0   # 速度寄存器 46 一个单位 = 多少步/秒：相位 18 BIT2=1 → 1（0.0146 rpm），BIT2=0 → 50（0.732 rpm）
 MAX_SPEED_REG = 3000   # "不限速"写多少：相位 BIT3=1 时 0 = 最快；BIT3=0 时 0 = 停，得写个大数（HD-1910 满速约 3000 步/秒）
 STREAM_LAST = {}       # goals_stream 上一帧给每颗的目标，用来算这一帧该多快
 
 
 def release_speed(ids):
-    """把速度上限放开、加速度设最大（41 = 0，46 = MAX_SPEED_REG），目标位置保持当前目标不变。"""
-    st = BUS.states(ids)
-    items = [(i, bytes([0]) + struct.pack("<H", enc_sm(st[i]["goal"])) + struct.pack("<H", 0) + struct.pack("<H", enc_sm(MAX_SPEED_REG)))
-             for i in ids if st.get(i)]
-    if items:
-        BUS.sync_write(41, 7, items)
+    """把速度上限放开、加速度设最大（41 = 0，46 = MAX_SPEED_REG）。只写这两个，**不碰目标位置 42**：
+    以前一包写 41..47 连目标一起，目标取自回读的 67。校准收尾刚把目标对准当前读数，
+    67 要是还没跟上，就把旧目标写回去了，下次开扭矩关节被拉走。"""
+    ids = list(ids)
+    if ids:
+        BUS.sync_write(41, 1, [(i, bytes([0])) for i in ids])
+        BUS.sync_write(46, 2, [(i, struct.pack("<H", enc_sm(MAX_SPEED_REG))) for i in ids])
 
 
 def read_phase():
-    """开机读一颗的相位 18，定速度单位和"不限速"的写法；顺手把所有舵机的速度上限放开。"""
+    """连接时只读相位 18，确定速度单位；保留舵机现有的速度、加速度和目标。"""
     global SPEED_UNIT, MAX_SPEED_REG
     if is_fake() or not PRESENT:
         return
@@ -195,8 +274,6 @@ def read_phase():
         SPEED_UNIT = 1.0 if ph & 0x04 else 50.0
         MAX_SPEED_REG = 0 if ph & 0x08 else int(3000 / SPEED_UNIT)
         log(f"相位 18 = {ph}（BIT2={'1' if ph & 4 else '0'} → 速度单位 {SPEED_UNIT:g} 步/秒；BIT3={'1 速度0=最快' if ph & 8 else '0 速度0=停'} → 不限速写 {MAX_SPEED_REG}）")
-        release_speed(PRESENT)
-        log("已把全部舵机速度上限放开、加速度设最大")
     except Exception as e:
         log(f"读相位失败，速度单位按 1 步/秒：{type(e).__name__}: {e}", "系统", "warn", exc=True)
 
@@ -237,6 +314,7 @@ def open_bus(port, baud=None):
         except Exception:
             pass
     log(f"串口 {port} @ {baud} 已打开", "总线")
+    drop_sim_imu("接上真串口")
     do_scan(IDS)
     read_phase()
     return {"ok": True, "msg": f"{port} 已连上，在线 {len(PRESENT)} 颗"}
@@ -247,6 +325,9 @@ def fallback_fake(why):
     global BUS, PORT, PRESENT
     BUS, PORT = FakeBus(IDS), None
     PRESENT = list(IDS)
+    if imu_backend(IMU_SERVICE) == "bus":   # 启动参数 --imu-bus 但没串口：假总线上挂一块虚拟小板答 ID 200
+        import imu_bus
+        BUS.imu200 = imu_bus.FakeImu200()
     log(f"{why}，先用假总线把页面起起来；插好 USB 后在页面顶栏选串口点「连接」", "总线", "warn")
 
 
@@ -255,7 +336,7 @@ def log_path():
 
 
 def log(msg, cat="系统", level="info", exc=False):
-    """cat：系统 / 总线 / 运动 / 校准 / 寄存器 / 姿态 / 方向。level：info / warn / error / debug。
+    """cat：系统 / 总线 / 运动 / 校准 / 寄存器 / 姿态 / 方向 / IMU。level：info / warn / error / debug。
     每行都追加到 logs/servo-web-日期.log（debug 只进文件，不上页面）；exc=True 把当前异常的 traceback 一起写进文件。
     出问题时这个文件就是现场，发过来或者让 Claude 直接读。"""
     global LOG_N
@@ -302,6 +383,11 @@ async def index(request):
                         headers={"Cache-Control": "no-store, max-age=0"})
 
 
+async def imu_attitude_file(request):
+    return FileResponse(os.path.join(HERE, "imu_attitude.js"), media_type="text/javascript",
+                        headers={"Cache-Control": "no-store"})
+
+
 async def model_file(request):
     name = request.path_params["name"]
     if name not in ("model.json", "meshes.bin"):
@@ -344,6 +430,18 @@ def save_dirs(dirs):
 
 
 CALIB_DIR = os.path.join(HERE, "calib")
+SIM_CALIB_DIR = None   # 模拟模式的校准备份：放临时目录，服务一关就没了
+
+
+def calib_dir():
+    """校准备份放哪。模拟模式不能用真的 calib/：虚拟舵机的偏移要是混进去，
+    接上真舵机点「撤销」，会把虚拟的偏移写进真舵机。"""
+    global SIM_CALIB_DIR
+    if not is_fake():
+        return CALIB_DIR
+    if SIM_CALIB_DIR is None or not os.path.isdir(SIM_CALIB_DIR):
+        SIM_CALIB_DIR = tempfile.mkdtemp(prefix="servo-web-sim-calib-")
+    return SIM_CALIB_DIR
 
 
 def backup_calibration(ids):
@@ -357,10 +455,11 @@ def backup_calibration(ids):
         except Exception as e:
             rows[str(i)] = {"error": f"{type(e).__name__}: {e}"}
             log(f"#{i} 备份时读不到：{type(e).__name__}: {e}", "校准", "warn", exc=True)
-    os.makedirs(CALIB_DIR, exist_ok=True)
+    d = calib_dir()
+    os.makedirs(d, exist_ok=True)
     now = time.time()                                  # 带毫秒：同一秒点两次也不撞名，字典序 = 时间顺序
     fn = f"eeprom-{time.strftime('%Y%m%d-%H%M%S', time.localtime(now))}{int(now * 1000) % 1000:03d}.json"
-    with open(os.path.join(CALIB_DIR, fn), "w", encoding="utf-8") as f:
+    with open(os.path.join(d, fn), "w", encoding="utf-8") as f:
         json.dump({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "servos": rows}, f, ensure_ascii=False, indent=1)
     return fn, rows
 
@@ -402,6 +501,7 @@ OFFSET_LIMIT = 2047      # 偏移寄存器 31 的安全量程：手册说 0~2047
 CALIB_LOCK = threading.Lock()   # 校准期间不让状态轮询抢总线：一次 sync_read 卡住能占几百毫秒，
                                 # 正好落在关扭矩的窗口里，关节就垂下去了
 OFFSET_SIGN = None       # +1：读数 = 原始 + 偏移；-1：读数 = 原始 − 偏移。手册没写死，开机探一次
+CALIB_BIG_DEG = 30       # 摆好的位置离目标差这么多度以上：页面再确认一次，日志单独列出来（不拦）
 
 
 def enc_sm(v):
@@ -599,7 +699,8 @@ def calibrate_one(i, before, target=2048):
             release_speed([i])
         except Exception:
             pass
-    head = (f"#{i} 读数 {pre if pre is not None else '?'}→{pos if pos is not None else '?'}（目标 {target}，{method}）"
+    gap = "" if pre is None else f"，差 {(target - pre) * 360 / 4096:+.1f}°"
+    head = (f"#{i} 读数 {pre if pre is not None else '?'}→{pos if pos is not None else '?'}（目标 {target}{gap}，{method}）"
             f" 偏移 {fmt_off(old_off)}→{fmt_off(off)}"
             + (f" 下垂{droop:+d}步" if droop else "")
             + ("" if before.get("lock") == 1 else f" 校准前锁标志 {before.get('lock')}")
@@ -617,11 +718,55 @@ def save_json_atomic(path, obj):
     os.replace(tmp, path)
 
 
+# 官方姿势：microduck_rl src/mjlab_microduck/robot/microduck/scene.xml 的 keyframe（d424a0c），弧度、模型约定。
+# 跟 index.html 的 OFFICIAL_POSES 是同一份。只有「折叠」能当校准基准：鸭子折好能自己趴住，膝靠零件顶住
+OFFICIAL_FOLD = {20: 0, 21: 0, 22: 1.57, 23: 1.57, 24: 0, 30: 1, 31: 1, 32: 0, 33: 0,
+                 10: 0, 11: 0, 12: -1.57, 13: -1.57, 14: 0}
+# 校准用的折叠：腿按官方 FOLD，头颈摆正（颈、头 pitch 0°）、嘴闭上。官方 FOLD 的颈 / 头 57° 不是接触点
+# （腿折好时颈要转到 66.6° 才碰上零件，fold_contact 算的），靠眼睛摆不准；脖子竖直、头平视好摆得多。零点照样是官方 2048
+FOLD_CALIB = {**OFFICIAL_FOLD, 30: 0, 31: 0, 34: 0}
+OFFICIAL_REFS = {"@official:FOLD": ("官方折叠（头颈摆正）", FOLD_CALIB)}
+
+
+def official_targets(ref):
+    """官方基准的目标读数：2048 + 角度 × 4096/2π × ±。± 用 directions.json，跟 3D、姿态发送一致。"""
+    label, rad = OFFICIAL_REFS[ref]
+    dirs = load_dirs()
+    return label, {i: int(round(2048 + a * 4096 / (2 * math.pi) * dirs.get(i, 1))) for i, a in rad.items()}
+
+
 def read_pose_file(fn):
     if not fn or os.path.basename(fn) != fn or not fn.endswith(".json"):
         raise ValueError(f"不认识的姿态文件 {fn!r}")
     with open(os.path.join(POSES_DIR, fn), encoding="utf-8") as f:
         return json.load(f)
+
+
+def calib_targets(ref):
+    """基准 → (名字, {id: 目标读数}, 是不是官方基准)。页面确认框和真校准用同一份，不各算各的。"""
+    if not ref:
+        return "零位 2048", {i: 2048 for i in IDS}, False
+    if ref in OFFICIAL_REFS:
+        label, targets = official_targets(ref)
+        return label, targets, True
+    pose = read_pose_file(ref)
+    return (f"姿态「{pose.get('name', ref)}」（{ref}）",
+            {int(r["id"]): int(r["pos"]) for r in pose.get("rows", [])}, False)
+
+
+def calib_plan(ids, ref=None):
+    """校准前给页面看：每颗现在读多少、要写成多少、差几度。只读，不写舵机。
+    差得多（> CALIB_BIG_DEG）不拦：装舵盘时转了半圈就是这样，校准正好把它纠回来；
+    页面会再确认一次，提醒排除「方向 ± 设反了」。"""
+    name, targets, _ = calib_targets(ref)
+    st = BUS.states(ids)
+    rows = []
+    for i in ids:
+        s, t = st.get(i), targets.get(i)
+        pos = s["pos"] if s else None
+        rows.append({"id": i, "joint": JOINT_NAMES.get(i), "pos": pos, "target": t,
+                     "diff_deg": None if pos is None or t is None else round((t - pos) * 360 / 4096, 1)})
+    return {"type": "calib_plan", "ref": ref, "name": name, "rows": rows, "big_deg": CALIB_BIG_DEG, "fake": is_fake()}
 
 
 def calibrate_mid_all(ids, ref=None):
@@ -639,17 +784,21 @@ def _calibrate_mid_all(ids, ref=None):
 
     存的姿态挪不挪：校到 2048 是换了零位，之前存的姿态是旧读数，要跟着挪；
     按姿态校准是把舵机拉回基准姿态那套读数，别的姿态跟基准是同一套读数存的，不挪（舵机换过、舵盘重装过，校回来它们就又对了）。"""
-    name = "零位 2048"
-    targets = {i: 2048 for i in ids}
-    if ref:
-        pose = read_pose_file(ref)
-        name = f"姿态「{pose.get('name', ref)}」（{ref}）"
-        targets = {int(r["id"]): int(r["pos"]) for r in pose.get("rows", [])}
-    log(f"开始校准 {len(ids)} 颗到{name}：{ids}", "校准")
+    # 官方基准（折叠）跟零位 2048 一样是在定零点：目标来自官方角度，不是存的读数，所以存的姿态要跟着换算
+    name, targets, official = calib_targets(ref)
+    if official:
+        name += "（" + " ".join(f"{i}→{targets[i]}" for i in ids if i in targets) + "）"
+    elif not ref:
+        targets = {i: 2048 for i in ids}
+    pose_ref = bool(ref) and not official
+    sim = is_fake()
+    # 模拟：虚拟舵机的读数跟真舵机没关系，存的姿态（真舵机的读数）一个都不挪
+    shift = not pose_ref and not sim
+    log(f"开始校准 {len(ids)} 颗到{name}：{ids}" + ("（模拟：只改虚拟舵机，备份放临时目录，存的姿态不挪）" if sim else ""), "校准")
     fn, before = backup_calibration(ids)
-    log(f"原来的偏移、读数、扭矩、锁标志备份在 calib/{fn}", "校准")
+    log(f"原来的偏移、读数、扭矩、锁标志备份在 {'临时目录 ' + calib_dir() + os.sep if sim else 'calib/'}{fn}", "校准")
     probe_offset_sign(next((i for i in ids if "offset" in before.get(str(i), {})), ids[0]))
-    ok, bad, deltas = [], {}, {}
+    ok, bad, deltas, big = [], {}, {}, {}
     for i in ids:
         b = before.get(str(i), {})
         if i not in targets:
@@ -666,25 +815,33 @@ def _calibrate_mid_all(ids, ref=None):
             ok.append(i)
             # 同一个物理位置（你摆好的那个），读数从 pre 变成了 target —— 下垂已经补偿掉了
             deltas[str(i)] = r["target"] - r["pre"]
+            if abs(deltas[str(i)]) * 360 / 4096 > CALIB_BIG_DEG:
+                big[i] = deltas[str(i)] * 360 / 4096
         else:
             bad[i] = r["why"]
     # 先把「打算挪哪些」落盘再真挪：反过来的话，中间崩了就再也挪不回去了
-    bp = os.path.join(CALIB_DIR, fn)
+    bp = os.path.join(calib_dir(), fn)
     with open(bp, encoding="utf-8") as f:
         rec = json.load(f)
-    plan = [] if ref else [p["file"] for p in list_poses() if p.get("goals")]
+    plan = [p["file"] for p in list_poses() if p.get("goals")] if shift else []
     rec.update({"ref": ref, "targets": {str(k): v for k, v in targets.items() if k in ids},
-                "deltas": deltas, "shifted": plan, "bad": {str(k): v for k, v in bad.items()}})
+                "deltas": deltas, "shifted": plan, "bad": {str(k): v for k, v in bad.items()}, "sim": sim})
     save_json_atomic(bp, rec)
-    moved = [] if ref else shift_saved_poses(deltas, only=set(plan))
+    moved = shift_saved_poses(deltas, only=set(plan)) if shift else []
     if moved != plan:
         rec["shifted"] = moved
         save_json_atomic(bp, rec)
     if moved:
         log(f"存的姿态换算到新零点：{moved}（" + " ".join(f"#{k}{v:+d}" for k, v in deltas.items() if v) + "）", "姿态")
+    if big:
+        # 不拦，只标出来：装舵盘时转了半圈会差 180°，校准正好纠回来；方向 ± 设反了也会差这么多，那种校进去是错的
+        log(f"这几颗摆好的位置离目标差 {CALIB_BIG_DEG}° 以上：" + " ".join(f"#{i} {d:+.1f}°" for i, d in big.items())
+            + "。装舵盘时转了半圈没关系；要是方向 ± 设反了，这次校进去的零点是错的：开扭矩用滑块推一点，"
+            "看 3D 里这个关节跟实物转的方向是不是一致，不一致就撤销、改 ±、重校", "校准", "warn")
     log(f"校准完（{name}）：成功 {len(ok)} 颗 {ok}" + (f"；失败 {len(bad)} 颗 {sorted(bad)}，原因见上面每颗那行" if bad else "")
-        + f"；备份 calib/{fn}", "校准", "warn" if bad else "info")
-    return {"type": "calib_result", "ok": ok, "bad": {str(k): v for k, v in bad.items()}, "backup": fn}
+        + f"；备份 {'临时目录（模拟）' if sim else 'calib/'}{fn}", "校准", "warn" if bad or big else "info")
+    return {"type": "calib_result", "ok": ok, "bad": {str(k): v for k, v in bad.items()}, "backup": fn,
+            "big": {str(k): round(v, 1) for k, v in big.items()}}
 
 
 def undo_calibration():
@@ -695,12 +852,13 @@ def undo_calibration():
 
 def _undo_calibration():
     """把最近一次备份里的偏移写回去（关扭矩 → 解锁 → 写 31 → 加锁），目标位置改成当前读数，扭矩状态照旧。"""
-    files = sorted(f for f in os.listdir(CALIB_DIR) if f.startswith("eeprom-")) if os.path.isdir(CALIB_DIR) else []
+    d = calib_dir()
+    files = sorted(f for f in os.listdir(d) if f.startswith("eeprom-")) if os.path.isdir(d) else []
     if not files:
-        log("没有可撤销的中位校准", "校准", "warn")
+        log("没有可撤销的中位校准" + ("（模拟模式只撤销模拟里做的校准）" if is_fake() else ""), "校准", "warn")
         return {"type": "calib_result", "ok": [], "bad": {}, "backup": None}
     fn = files[-1]
-    with open(os.path.join(CALIB_DIR, fn), encoding="utf-8") as f:
+    with open(os.path.join(d, fn), encoding="utf-8") as f:
         rec = json.load(f)
     log(f"开始撤销：把 calib/{fn}（{rec.get('time', '?')}）里的偏移写回去", "校准")
     ok, bad = [], {}
@@ -752,7 +910,9 @@ def _undo_calibration():
                 BUS.lock(i)
             except Exception as e:
                 log(f"#{i} 加锁失败：{type(e).__name__}: {e}", "校准", "error", exc=True)
-    if "shifted" in rec:
+    if rec.get("sim"):
+        pass                                           # 模拟里校的：当时就没挪姿态，撤销也不挪
+    elif "shifted" in rec:
         # 当次挪过的要挪回来；校准之后新存的姿态是按新坐标系存的，也得挪回去，
         # 不然撤销完它们指向的物理姿势整体偏了 delta 步，一发就把关节顶到限位
         later = []
@@ -767,7 +927,7 @@ def _undo_calibration():
             log(f"存的姿态换算回原来的零点：{moved}" + (f"（其中 {later} 是校准之后存的，按新零点存的也要挪）" if later else ""), "姿态")
     elif any(rec.get("deltas", {}).values()):
         log("这份备份是 0.8.0 以前的，没记当时挪了哪些姿态，姿态不自动挪回，需要的话手动核对", "姿态", "warn")
-    os.rename(os.path.join(CALIB_DIR, fn), os.path.join(CALIB_DIR, "undone-" + fn))
+    os.rename(os.path.join(d, fn), os.path.join(d, "undone-" + fn))
     log(f"撤销完（{fn} 已改名 undone-{fn}）：{len(ok)} 颗偏移写回" + (f"；失败 {sorted(bad)}" if bad else ""),
         "校准", "warn" if bad else "info")
     return {"type": "calib_result", "ok": ok, "bad": {str(k): v for k, v in bad.items()}, "backup": fn}
@@ -833,6 +993,39 @@ async def info(request):
                          "stats": BUS.stats, "log": LOG[-50:]})
 
 
+def torque_on_aligned(ids):
+    """开扭矩前先把目标（42）对准当前读数。扭矩关着时用手掰过关节、或者关着时发过姿势 / 校准过，
+    目标寄存器里还是旧值，一开扭矩舵机就按放开的速度冲过去。
+    顺序：读扭矩 → 关着的读位置 → 写目标 = 位置（带应答）→ 直接读 42 核对 → 开扭矩。
+    核对读 42 本身，不看状态里的 67：67 在真机上跟不跟得上没验证过。本来就开着的不动它的目标（可能正在走）。
+    读不到位置、目标写不进去的那颗不开。返回 (开了的, {id: 目标}, {id: 没开的原因})。"""
+    tq = BUS.sync_read(ids, 40, 1)
+    already = [i for i in ids if tq.get(i) and tq[i][1][0] == 1]
+    need = [i for i in ids if i not in already]
+    aligned, bad = {}, {}
+    st = BUS.states(need) if need else {}
+    for i in need:
+        if not st.get(i):
+            bad[i] = "读不到位置，没开扭矩（开了可能冲向旧目标）"
+            continue
+        p = st[i]["pos"]
+        try:
+            for _ in range(2):
+                BUS.write_u16(i, 42, enc_sm(p))
+                got = feetech.sign15(BUS.read_u16(i, 42))
+                if got == p:
+                    aligned[i] = p
+                    break
+            else:
+                bad[i] = f"目标写 {p} 读回 {got}，没开扭矩"
+        except Exception as e:
+            bad[i] = f"写目标出错（{type(e).__name__}: {e}），没开扭矩"
+    on = already + [i for i in need if i in aligned]
+    if on:
+        BUS.sync_write(40, 1, [(i, bytes([1])) for i in on])
+    return on, aligned, bad
+
+
 def do_scan(ids):
     global PRESENT
     found = [i for i in ids if BUS.ping(i) is not None]
@@ -860,9 +1053,70 @@ def do_timing(n=200):
     return res
 
 
+SIM_IMU_OWNED = False   # 当前 IMU_SERVICE 是不是页面「模拟」里接上的（启动参数给的不归它管）
+SIM_IMU_LOCK = threading.Lock()   # 两个标签页同时点、或者跟「连接串口」撞上，别各改一半
+
+
+def imu_config_frame():
+    return {"type": "imu_config", "enabled": IMU_SERVICE is not None, "sim_imu": sim_imu_mode()}
+
+
+def drop_sim_imu(why):
+    """接上真串口时把模拟里接的虚拟小板拔掉：真总线上没有它，留着页面会一直显示假姿态。启动参数给的 IMU 不动。"""
+    global IMU_SERVICE, SIM_IMU_OWNED
+    with SIM_IMU_LOCK:
+        if not SIM_IMU_OWNED:
+            return False
+        IMU_SERVICE, SIM_IMU_OWNED = None, False
+    log(f"{why}：模拟里接的虚拟 IMU 小板已拔掉；真 IMU 用启动参数 --imu-bus / --imu-swd / --imu-jlink", "IMU")
+    return True
+
+
+def sim_imu_mode():
+    """模拟 IMU 现在是：off 不接 / on 虚拟小板在线 / lost 虚拟小板掉线；不是模拟接上的返回 None。"""
+    if not SIM_IMU_OWNED or IMU_SERVICE is None:
+        return "off" if is_fake() and IMU_SERVICE is None else None
+    return "on" if getattr(BUS, "imu200", None) is not None else "lost"
+
+
+def set_sim_imu(mode):
+    """模拟模式下接 / 拔虚拟 IMU 小板。走的是 --imu-bus 同一条路：虚拟小板挂在假总线上答 ID 200。"""
+    with SIM_IMU_LOCK:
+        return _set_sim_imu(mode)
+
+
+def _set_sim_imu(mode):
+    global IMU_SERVICE, SIM_IMU_OWNED
+    import imu_bus
+    if not is_fake():
+        raise ValueError("接了真串口，不能用虚拟 IMU；真 IMU 用启动参数 --imu-bus / --imu-swd / --imu-jlink")
+    if IMU_SERVICE is not None and not SIM_IMU_OWNED:
+        raise ValueError("服务启动时已经指定了 IMU（启动参数），页面里不改")
+    if mode == "off":
+        IMU_SERVICE, SIM_IMU_OWNED = None, False
+        BUS.imu200 = None
+        log("模拟：拔掉虚拟 IMU 小板，页面隐藏姿态面板", "IMU")
+    elif mode in ("on", "lost"):
+        if IMU_SERVICE is None:
+            IMU_SERVICE, SIM_IMU_OWNED = imu_bus.BusImuService(poll_hz=FAKE_STREAM_HZ), True
+        if mode == "on":
+            if BUS.imu200 is None:
+                BUS.imu200 = imu_bus.FakeImu200()
+            log("模拟：接上虚拟 IMU 小板（假总线上的 ID 200，跟 --imu-bus 同一条路）", "IMU")
+        else:
+            BUS.imu200 = None
+            log("模拟：虚拟小板掉线 —— 看调试台怎么把 200 出列、改成单独 PING", "IMU")
+    else:
+        raise ValueError(f"不认识的模拟 IMU 模式：{mode}")
+    return imu_config_frame()
+
+
 def handle(cmd):
     """WebSocket 指令，同步执行（在线程里跑）。返回要回给前端的 dict 或 None。"""
     op = cmd.get("op")
+    if op == "sim_imu":
+        set_sim_imu(cmd.get("mode"))
+        return None                  # ws_endpoint 把新配置广播给所有页面
     if op == "goal":
         BUS.write_u16(int(cmd["id"]), 42, int(cmd["pos"]) & 0xFFFF)
     elif op == "goals":  # {id: pos}
@@ -932,8 +1186,14 @@ def handle(cmd):
             ids = [int(i) for i in cmd["ids"]]
         else:
             ids = [int(cmd["id"])] if cmd.get("id") is not None else (PRESENT or IDS)
-        BUS.sync_write(40, 1, [(i, bytes([int(cmd["on"])])) for i in ids])
-        log(f"扭矩{'开' if int(cmd['on']) else '关'} → {ids}", "运动")
+        if int(cmd["on"]):
+            on, aligned, bad = torque_on_aligned(ids)
+            log(f"扭矩开 → {on}" + (f"；开之前目标对准当前位置：" + " ".join(f"#{i}→{p}" for i, p in aligned.items()) if aligned else "")
+                + (f"；没开 " + " ".join(f"#{i}（{w}）" for i, w in bad.items()) if bad else ""), "运动", "warn" if bad else "info")
+            return {"type": "torque", "on": 1, "ids": on, "aligned": {str(i): p for i, p in aligned.items()},
+                    "bad": {str(i): w for i, w in bad.items()}}
+        BUS.sync_write(40, 1, [(i, bytes([0])) for i in ids])
+        log(f"扭矩关 → {ids}", "运动")
     elif op == "scan":
         return {"type": "scan", "present": do_scan(parse_ids(cmd.get("ids") or DEFAULT_IDS))}
     elif op == "scan_all":
@@ -981,6 +1241,10 @@ def handle(cmd):
     elif op == "calib_mid_all":
         ids = [int(i) for i in cmd.get("ids") or []] or list(PRESENT or IDS)
         return calibrate_mid_all([i for i in ids if i in (PRESENT or IDS)], cmd.get("ref") or None)
+    elif op == "calib_plan":
+        ids = [int(i) for i in cmd.get("ids") or []] or list(PRESENT or IDS)
+        return {**calib_plan([i for i in ids if i in (PRESENT or IDS)], cmd.get("ref") or None),
+                "for": cmd.get("for"), "id": cmd.get("id")}
     elif op == "ports":
         return {"type": "ports", "ports": list_ports(), "port": PORT, "fake": is_fake()}
     elif op == "reconnect":
@@ -1022,6 +1286,36 @@ async def broadcast(text):
             CLIENTS.discard(ws)
 
 
+def read_states_with_imu(ids, service):
+    """--imu-bus：跟主控每 tick 同一条 sync_read（地址 56、长度 15、200 排第一），
+    舵机状态照旧解，200 的块喂给 service。200 连续不应答时 service 会让它暂时出列。"""
+    import imu_bus
+    servo_ids = [i for i in ids if i != imu_bus.IMU_ID]
+    with_imu = service.include_in_sync()
+    if not with_imu and service.due_probe():
+        if service.probe_result(BUS.ping(imu_bus.IMU_ID) is not None):
+            log("ID 200 的 PING 有应答了，重新跟舵机一起读", "IMU")
+    if isinstance(BUS, FakeBus):
+        # 虚拟小板：启动参数 --fake --imu-bus 时 fallback_fake 挂上，或者页面「模拟」里接上
+        st = BUS.states(servo_ids)
+        got = BUS.sync_read([imu_bus.IMU_ID], imu_bus.BLOCK_ADDR, imu_bus.BLOCK_LEN) if with_imu else {}
+    else:
+        ids_sent = ([imu_bus.IMU_ID] if with_imu else []) + servo_ids
+        # 台架上只接小板、200 又暂时出列时列表是空的：不发空 ID 表的 sync_read
+        got = BUS.sync_read(ids_sent, imu_bus.BLOCK_ADDR, imu_bus.BLOCK_LEN) if ids_sent else {}
+        st = {sid: (feetech.FeetechBus._decode_state(*got[sid]) if got.get(sid) else None) for sid in servo_ids}
+    v = got.get(imu_bus.IMU_ID)
+    if with_imu or v is not None:
+        service.feed(v[1] if v else None)
+    return st
+
+
+def stream_should_poll():
+    """这一拍要不要读总线。--imu-bus 时没扫到舵机也要读：台架上可能只接了小板（ID 200 不在扫描范围里）。"""
+    return bool(CLIENTS) and (bool(PRESENT) or imu_backend(IMU_SERVICE) == "bus") \
+        and not CALIB_LOCK.locked()
+
+
 async def stream():
     """按 STREAM_HZ 广播全部舵机状态和新日志。读不到的舵机攒 3 秒报一次，同一个错误 5 秒内只记一次。"""
     sent_n = LOG_N
@@ -1029,11 +1323,14 @@ async def stream():
     err_last, err_t = "", 0.0
     while True:
         t0 = time.monotonic()
-        if CLIENTS and PRESENT and not CALIB_LOCK.locked():
+        if stream_should_poll():
             # 校准期间不抢总线：一次 sync_read 遇上掉包能占几百毫秒，
             # 正好卡在关扭矩的窗口里，关节就垂下去了
             try:
-                st = await asyncio.to_thread(BUS.states, PRESENT)
+                if imu_backend(IMU_SERVICE) == "bus":
+                    st = await asyncio.to_thread(read_states_with_imu, PRESENT, IMU_SERVICE)
+                else:
+                    st = await asyncio.to_thread(BUS.states, PRESENT)
                 for i, v in st.items():
                     if v is None:
                         miss[i] = miss.get(i, 0) + 1
@@ -1053,26 +1350,28 @@ async def stream():
             if items:
                 sent_n = items[-1]["n"]
                 await broadcast(json.dumps({"type": "logs", "items": items}))
-        await asyncio.sleep(max(0.0, 1.0 / STREAM_HZ - (time.monotonic() - t0)))
+        hz = FAKE_STREAM_HZ if is_fake() else STREAM_HZ
+        await asyncio.sleep(max(0.0, 1.0 / hz - (time.monotonic() - t0)))
 
 
 # 指令 → 日志分类；QUIET 是拖滑块、流式这种高频指令，不逐条记
 OP_CAT = {"goal": "运动", "goals": "运动", "goals_stream": "运动", "stream_end": "运动", "goals_profile": "运动",
           "release": "运动", "goals_verify": "运动", "torque": "运动", "scan": "总线", "scan_all": "总线", "timing": "总线",
           "dump": "寄存器", "write_reg": "寄存器", "reboot": "寄存器", "set_id": "寄存器", "calibrate": "校准",
-          "calib_mid_all": "校准", "calib_undo": "校准", "set_dir": "方向", "save_pose": "姿态", "poses": "姿态",
+          "calib_mid_all": "校准", "calib_undo": "校准", "calib_plan": "校准", "sim_imu": "IMU", "set_dir": "方向", "save_pose": "姿态", "poses": "姿态",
           "delete_pose": "姿态", "log": "系统", "page_log": "页面"}
 QUIET = {"goal", "goals", "goals_stream", "stream_end", "poses", "log", "release", "page_log"}
 
 
 async def ws_endpoint(ws):
     await ws.accept()
-    CLIENTS.add(ws)
     await ws.send_text(json.dumps({"type": "hello", "ids": IDS, "present": PRESENT, "names": JOINT_NAMES,
                                    "fake": is_fake(), "logs": LOG[-150:], "cats": LOG_CATS, "dirs": load_dirs(),
                                    "port": PORT, "ports": list_ports(),
                                    "regs": [[a, *feetech.REGISTERS[a]] for a in sorted(feetech.REGISTERS)],
-                                   "version": VERSION}))
+                                   "version": VERSION, "imu_enabled": IMU_SERVICE is not None,
+                                   "sim_imu": sim_imu_mode()}))
+    CLIENTS.add(ws)  # hello 必须先于后台广播，前端先收到功能配置
     try:
         while True:
             cmd = json.loads(await ws.receive_text())
@@ -1087,21 +1386,142 @@ async def ws_endpoint(ws):
                 reply = {"type": "error", "msg": msg}
             if reply:
                 await ws.send_text(json.dumps(reply))
+            if op in ("sim_imu", "reconnect"):
+                # 成功失败都广播：失败时页面下拉框要退回实际状态；别的标签页也跟着变
+                await broadcast(json.dumps(imu_config_frame()))
     except WebSocketDisconnect:
         pass
     finally:
         CLIENTS.discard(ws)
 
 
+class ImuLogHandler(logging.Handler):
+    """J-Link SDK/桥接器也写现有的分类日志，保留一条排查时间线。"""
+
+    def emit(self, record):
+        level = ("error" if record.levelno >= logging.ERROR else
+                 "warn" if record.levelno >= logging.WARNING else
+                 "info" if record.levelno >= logging.INFO else "debug")
+        log(self.format(record), "IMU", level)
+
+
+def imu_backend(service):
+    """服务用的探针后端名（jlink / swd），拿不到就是 None；只认字符串，免得把怪对象塞进 JSON。"""
+    backend = getattr(service, "backend", None)
+    return backend if isinstance(backend, str) else None
+
+
+def imu_error_frame(message, backend=None):
+    return {"type": "imu", "status": "error", "mode": "live", "live": False,
+            "connected": False, "quaternion_xyzw": None, "message": message,
+            "backend": backend, "timestamp_ms": int(time.time() * 1000)}
+
+
+async def imu_stream(service, startup_error=None):
+    """独立读状态/广播任务：串口超时不会拖慢 IMU，异常也不影响舵机流。"""
+    previous = None
+    error_last, error_time = "", 0.0
+    while True:
+        try:
+            frame = (imu_error_frame(startup_error, imu_backend(service))
+                     if startup_error else service.get_status())
+            state = (frame.get("mode"), frame.get("status"), frame.get("connected"))
+            if state != previous:
+                level = "error" if frame.get("status") == "error" else (
+                    "info" if frame.get("live") else "warn")
+                log(f"状态 {frame.get('mode')}/{frame.get('status')}：{frame.get('message', '')}", "IMU", level)
+                previous = state
+            if CLIENTS:
+                await broadcast(json.dumps(frame))
+        except Exception as exc:
+            message = f"读取 IMU 状态失败：{type(exc).__name__}: {exc}"
+            now = time.monotonic()
+            if message != error_last or now - error_time >= 5:
+                log(message, "IMU", "error", exc=True)
+                error_last, error_time = message, now
+            if CLIENTS:
+                await broadcast(json.dumps(imu_error_frame(message, imu_backend(service))))
+        await asyncio.sleep(0.05)
+
+
+async def imu_stream_dynamic():
+    """模拟模式：虚拟 IMU 可以在页面上随时接上 / 拔掉，推送任务跟着 IMU_SERVICE 换。"""
+    current, task = None, None
+    try:
+        while True:
+            svc = IMU_SERVICE
+            if svc is not current:
+                if task is not None:
+                    task.cancel()
+                    await asyncio.gather(task, return_exceptions=True)
+                task = asyncio.create_task(imu_stream(svc)) if svc is not None else None
+                current = svc
+            await asyncio.sleep(0.2)
+    finally:
+        if task is not None:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app):
-    task = asyncio.create_task(stream())
-    yield
-    task.cancel()
+    tasks = [asyncio.create_task(stream())]
+    service = IMU_SERVICE
+    handler = None
+    logger = logging.getLogger("imu_bridge")
+    old_level, old_propagate = logger.level, logger.propagate
+    # pyOCD 自己的日志很啰嗦，只收警告以上，跟桥接器同一条 IMU 时间线
+    pyocd_logger = logging.getLogger("pyocd")
+    pyocd_old = (pyocd_logger.level, pyocd_logger.propagate)
+    pyocd_handler = None
+    try:
+        if service is not None:
+            handler = ImuLogHandler()
+            logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+            logger.propagate = False
+            if imu_backend(service) == "swd":
+                pyocd_handler = ImuLogHandler(level=logging.WARNING)
+                pyocd_logger.addHandler(pyocd_handler)
+                pyocd_logger.setLevel(logging.WARNING)
+                pyocd_logger.propagate = False
+            startup_error = None
+            try:
+                service.start()
+                log("姿态读取已启动（演示数据）" if service.demo else
+                    "SWD 姿态读取已启动（pyOCD）" if imu_backend(service) == "swd" else
+                    "总线 IMU 已启用：ID 200 跟舵机在同一条 sync_read 里读（有网页连着才轮询）"
+                    if imu_backend(service) == "bus" else "J-Link 姿态读取已启动", "IMU")
+            except Exception as exc:
+                startup_error = f"启动 IMU 失败：{type(exc).__name__}: {exc}"
+                log(startup_error, "IMU", "error", exc=True)
+            tasks.append(asyncio.create_task(imu_stream(service, startup_error)))
+        else:
+            tasks.append(asyncio.create_task(imu_stream_dynamic()))
+        yield
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        if service is not None:
+            try:
+                await asyncio.to_thread(service.stop)
+                log("姿态读取已停止，探针连接已释放", "IMU")
+            except Exception as exc:
+                log(f"停止 IMU 失败：{type(exc).__name__}: {exc}", "IMU", "error", exc=True)
+            finally:
+                logger.removeHandler(handler)
+                logger.setLevel(old_level)
+                logger.propagate = old_propagate
+                if pyocd_handler is not None:
+                    pyocd_logger.removeHandler(pyocd_handler)
+                    pyocd_logger.setLevel(pyocd_old[0])
+                    pyocd_logger.propagate = pyocd_old[1]
 
 
 app = Starlette(routes=[
     Route("/", index),
+    Route("/imu_attitude.js", imu_attitude_file),
     Route("/api/info", info),
     Route("/api/poses", poses),
     Route("/api/logfile", logfile),
@@ -1110,8 +1530,7 @@ app = Starlette(routes=[
 ], lifespan=lifespan)
 
 
-def main():
-    global BUS, IDS, PRESENT, BAUD
+def parse_args(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", help="串口，如 COM5 / /dev/ttyUSB0 / /dev/ttyS2")
     ap.add_argument("--baud", type=int, default=1_000_000)
@@ -1119,7 +1538,82 @@ def main():
     ap.add_argument("--fake", action="store_true", help="不接舵机，界面演示")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--http-port", type=int, default=8080)
-    a = ap.parse_args()
+    imu = ap.add_mutually_exclusive_group()
+    imu.add_argument("--imu-jlink", type=Path, metavar="CONFIG.json",
+                     help="用本机配置文件启用 J-Link IMU 读数，数据仍走当前 /ws")
+    imu.add_argument("--imu-swd", nargs="?", const="auto", metavar="UID",
+                     help="用 pyOCD 经 ST-Link / DAPLink 读 IMU（只插一个调试器时可省略 UID；J-Link 用 --imu-jlink）")
+    imu.add_argument("--imu-bus", action="store_true",
+                     help="从舵机总线读 IMU 小板 ID 200（跟主控同一条 sync_read，200 排第一；固件要是飞特协议版）")
+    imu.add_argument("--imu-demo", action="store_true", help="合成 IMU 数据，不连接 J-Link")
+    return ap.parse_args(argv)
+
+
+def create_imu_service(args):
+    # 不启用时不导入桥接器，也不需要 J-Link SDK / pyOCD。
+    imu_swd = getattr(args, "imu_swd", None)
+    imu_bus = getattr(args, "imu_bus", False)
+    if not args.imu_jlink and not args.imu_demo and imu_swd is None and not imu_bus:
+        return None
+    if imu_bus:
+        from imu_bus import BusImuService
+        # 跟 stream() 实际读总线的频率一致：模拟 30 Hz、真串口 50 Hz（启动时没给串口也按模拟算）
+        return BusImuService(poll_hz=FAKE_STREAM_HZ if args.fake or not args.port else STREAM_HZ)
+    from imu_bridge import BridgeService, DEFAULT_FIRMWARE, validate_probe_settings
+    if args.imu_demo:
+        return BridgeService(demo=True)
+    if imu_swd is not None:
+        if not imu_swd.strip():
+            raise ValueError("--imu-swd 后面的 UID 不能为空；只插一个调试器时直接写 --imu-swd")
+        import importlib.util
+        if importlib.util.find_spec("pyocd") is None:
+            raise ValueError("--imu-swd 需要 pyOCD：pip install pyocd")
+        if not DEFAULT_FIRMWARE.is_file():
+            raise ValueError(f"IMU 固件文件不存在：{DEFAULT_FIRMWARE}")
+        return BridgeService(backend="swd", probe_id=imu_swd.strip())
+    path = args.imu_jlink.resolve()
+    try:
+        config = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"IMU 配置读取失败 {path}: {exc}") from exc
+    if not isinstance(config, dict):
+        raise ValueError("IMU 配置必须是 JSON 对象")
+    unknown = set(config) - {"dll", "probe_serial", "firmware", "hz", "resume"}
+    if unknown:
+        raise ValueError("未知 IMU 配置项：" + ", ".join(sorted(unknown)))
+    if not isinstance(config.get("dll"), str) or not config["dll"].strip():
+        raise ValueError("IMU 配置必须填写本机 JLink_x64.dll 路径 dll")
+    serial = config.get("probe_serial")
+    if isinstance(serial, bool) or not isinstance(serial, int) or serial <= 0:
+        raise ValueError("IMU 配置必须填写自己的正整数 probe_serial，不自动选择探针")
+    resume = config.get("resume", False)
+    if not isinstance(resume, bool):
+        raise ValueError("IMU 配置 resume 必须是 true 或 false")
+    hz = config.get("hz", 20)
+    if isinstance(hz, bool) or not isinstance(hz, (int, float)) or not math.isfinite(hz) or not 1 <= hz <= 20:
+        raise ValueError("IMU 配置 hz 必须是 1 到 20 之间的有限数值")
+
+    def config_path(value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("IMU 文件路径必须是非空字符串")
+        candidate = Path(value).expanduser()
+        return (candidate if candidate.is_absolute() else path.parent / candidate).resolve()
+
+    dll = config_path(config["dll"])
+    dll, serial = validate_probe_settings(dll, serial)
+    firmware = config_path(config["firmware"]) if "firmware" in config else DEFAULT_FIRMWARE
+    if not firmware.is_file():
+        raise ValueError(f"IMU 固件文件不存在：{firmware}")
+    return BridgeService(dll_path=dll, serial=serial, firmware=firmware, hz=float(hz), resume=resume)
+
+
+def main(argv=None):
+    global BUS, IDS, PRESENT, BAUD, IMU_SERVICE
+    a = parse_args(argv)
+    try:
+        IMU_SERVICE = create_imu_service(a)
+    except (ValueError, RuntimeError, OSError) as exc:
+        raise SystemExit(f"IMU 配置错误：{exc}") from exc
     IDS = parse_ids(a.ids)
     BAUD = a.baud
     log(f"舵机调试台 v{VERSION} 启动，日志写在 {log_path()}", "系统")

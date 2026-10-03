@@ -2,3 +2,10 @@ upstream/
 __pycache__/
 *.pyc
 _render_tmp.xml
+
+# Local upstream mesh analysis exports; printable models live in the CAD repository.
+analysis-output/
+# Model downloads are maintained in microduck-replica-cad.
+/cad/*.stl
+/cad/零件对照表.json
+/print/**/*.stl

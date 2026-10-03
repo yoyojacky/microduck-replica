@@ -2,6 +2,8 @@
 
 **简体中文** · [English](README.en.md)
 
+> **模型与打印文件统一入口：[microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad)。** 飞特 / XL330 请选对应版本；本仓旧打印 STL 已移除，避免误打。
+
 > 对 [Pollen Robotics Microduck](https://pollen-robotics.com/microduck/) 的第三方复刻研究。
 > 从官方公开的 MJCF 仿真模型反推出**装配图、爆炸图和可直接导入 CAD 的装配体**。
 
@@ -32,11 +34,11 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 |---|---|---|
 | **舵机** | XL330-M288-T ×15 | HD-1910-C001 ×15 —— 便宜一半、力矩 2.5 倍 |
 | **电压** | 额定 6 V，实跑 6.6–8.2 V，**超压 37%** | 额定 4–8.4 V，在额定内；但满电 8.4 V 顶格 |
-| **打印件** | [`print/`](print/) 上游 STL 直接打 | **8 个配合件要改**（HD-1910 舵盘凸、XL330 凹）—— [拓竹一键打印](https://makerworld.com.cn/zh/models/2963569-microduck#profileId-3478428) / [3mf](https://github.com/fanhao375/microduck-replica-cad/tree/master/打印) |
-| **可编辑图纸** | [图纸仓 v1.1](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v1.1) | [图纸仓 v2.0](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v2.0)，文件带 `-FT` 后缀 |
+| **打印件** | [CAD 仓库 · XL330 版](https://github.com/fanhao375/microduck-replica-cad#两个版本选一个下) | [CAD 仓库 · 飞特版](https://github.com/fanhao375/microduck-replica-cad#两个版本选一个下)，舵盘配合件不能混用 |
+| **可编辑图纸** | [图纸仓 v1.1](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v1.1) | [图纸仓 v2.1](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v2.1)，文件带 `-FT` 后缀 |
 | **电路** | 官方 HAT + [`imu_to_dxl`](hardware/imu_to_dxl/) | 同左；舵机连接器 2.0 mm（官方 2.5），`imu_to_dxl` 板上 J4/J5 是 2.0 |
 | **软件** | 官方运行时直接跑 | 总线协议不同，要换协议模块 —— [适配架构分析](software/飞特适配架构.md)；策略要按 HD-1910 重训 —— [训练前数据清单](docs/HD-1910训练前数据清单.md) |
-| **状态** | 纸上分析 + 首批打印件 | **整机装出实物**（2026-09-13），**15 颗上总线、能站起来坐下**（2026-09-18），零位和站姿还在调 |
+| **状态** | 纸上分析 + 首批打印件 | 已装机并站起（09-18）；Armbian + HAT 已读通 14 颗关节，保持姿势 3000 轮窗口无漏读，实际约 46.87 Hz；嘴部 ID 29 按用户要求排除，未验收；摄像头仅官方 B1 出图，Armbian 复测待完成 |
 
 选型论证在 [执行器选型](docs/执行器选型.md)。本仓库主线走飞特；原版资料同样齐全，两条都能复刻。
 
@@ -46,16 +48,25 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 
 有人在做同样的事，凑了个微信群一起讨论复刻进度、踩过的坑、元件采购。
 
-**一群到七群都已满 200 人**（微信满 200 后无法扫码进），下面是**八群**的码。
+下面是**鸭子复刻群 10**的二维码（微信群满 200 人后无法扫码加入）。
 
 <div align="center">
-  <img src="assets/wechat-group-8.png" alt="鸭子复刻 微信群" width="280">
+  <img src="assets/wechat-group-10.png" alt="鸭子复刻群 10 微信二维码" width="280">
   <br>
-  <sub><b>鸭子复刻群 8 · 二维码有效期到 2026-09-27</b>（微信群码 7 天自动失效）<br>
+  <sub><b>鸭子复刻群 10 · 二维码有效期到 2026-10-08</b>（微信群码 7 天自动失效）<br>
   过期了请开个 <a href="https://github.com/fanhao375/microduck-replica/issues">issue</a> 说一声，我会换上新的</sub>
 </div>
 
 ## 最近更新
+
+**2026-09-29 · 镜像登录勘误**：旧公开镜像第一次用 **`root / 1234`** 登录；完成 Armbian 向导后才创建 `duck / duck1234` 并更换 root 密码，请随即修改默认密码。旧卡仍需补 `wlan0` DHCP。[使用说明](tools/radxa/镜像使用说明.md)已更正；新的 [DHCP 修复候选镜像](https://github.com/fanhao375/microduck-replica/releases/tag/radxa-zero3w-armbian-20260929)经过离线校验，**尚未对这份新产物烧卡实测**。基础镜像不含机器人运行时或网页调试台。
+
+**2026-09-28 · HAT 状态回读**：主板调试台已部署 **0.15.4**，修正同步读按返回 ID 归档的问题，目标回读频率为 50 Hz。保持现有姿势约 64 秒，14 颗各 **3000/3000** 有效，共 42000 条状态；此窗口 timeout、checksum、ID 错误均为 0，实际约 **46.87 Hz**。测试前后均已使能，目标与设置未变；这是状态采集，**尚未验收带 IMU、推理和动作写入的完整控制循环或步态**，其他时段仍有偶发缺应答。[测试范围与结果](tools/radxa/50Hz保持姿势读状态-20260928.md)。
+
+**2026-09-28 · HAT 与摄像头调试**：HAT 已到货并与主板对插；Radxa Camera 8M219 起初在两个系统下都识别失败，调整排线正反面后，官方 B1 成功读到 IMX219 并采集 **40 帧、1920×1080** 图像。下一步换回原项目 Armbian 镜像，用正确接线复测；本次是短测，尚未验收持续帧率、HAT 全功能或整机行走。**[接线参考图与复测记录](tools/radxa/摄像头调试记录-20260928.md)** · **[踩坑记录](踩坑记录.md#主板--hat--摄像头)**。
+
+**IMU 姿态接入调试台**：[`tools/servo-web/`](tools/servo-web/) 可选接入 J-Link，在同一个 3D 鸭子上显示舵机关节角与 IMU 躯干姿态。配套固件在 [`hardware/imu_to_dxl/firmware/`](hardware/imu_to_dxl/firmware/)，**0.2.0 已改成飞特协议**（ID 200、地址 56、15 字节），电脑上验收全过，等整机上真总线实测；没有 J-Link 也能用 ST-Link / DAPLink（`--imu-swd`）或直接走舵机总线（`--imu-bus`）看姿态。
+
 
 <table>
 <tr>
@@ -69,7 +80,7 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 用仓库里新写的[网页调试台](tools/servo-web/)拖滑块、存姿态、跑序列，3D 模型跟着真机动，重心投影实时显示在不在脚底范围。
 上面这段是它从缩着**自己站起来**再坐下。**飞特路线的软件第一步走通了**，硬件方案没问题。
 
-`imu_to_dxl` 板首板已到：3.3 V 正常，J4/J5 接口封装要改，固件还没写 —— [设计说明与评审记录](hardware/imu_to_dxl/)。
+以上是 09-18 的上电记录。09-28 早期本机原 ID 21 损坏，嘴 ID 34 的舵机挪作 ID 21，用户确认 FD 校中位到 2048；随后用户将嘴部 ID 设为 29，扫描曾识别其固件/型号。本轮只测试 14 颗关节，嘴 29 按用户要求排除、未验收，不能沿用“15 颗全在线”作为当前验收结论。`imu_to_dxl` 已有飞特协议 [0.2.0 固件](hardware/imu_to_dxl/firmware/)，真总线仍待测。
 
 **[网页调试台](tools/servo-web/)**　·　
 **[调试记录](调试记录.md)**（零位、方向、站姿的坑）　·　
@@ -92,10 +103,10 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 
 **[构建日志](构建日志.md)**　·
 **[飞特版 SolidWorks 图纸](https://github.com/fanhao375/microduck-replica-cad)**　·
-**[拓竹一键打印](https://makerworld.com.cn/zh/models/2963569-microduck#profileId-3478428)**　·
+**[模型与打印文件](https://github.com/fanhao375/microduck-replica-cad)**　·
 **[BOM 清单 · 带采购链接](https://github.com/fanhao375/microduck-replica-cad#装配-bom)**　·
 [调试记录](调试记录.md)　·
-[打印件清单](print/)
+[打印入口](print/)
 </td>
 </tr>
 <tr>
@@ -121,14 +132,17 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 </td>
 <td width="50%" valign="top">
 
-### 🧠 算法 · 待更新
+### 🧠 算法 · 接入公开的 1910 M6 参数
 
-走路策略还没开始。官方是 [microduck_rl](https://github.com/apirrone/microduck_rl) 在 MuJoCo 里训好导出 ONNX，
-运行时按 50 Hz 推理。飞特版要先把**零位和关节方向**标定准，策略才有意义 —— 现在卡在这一步。
+采用 **[LuwuDynamics/xgoduck_rl](https://github.com/LuwuDynamics/xgoduck_rl) 公开的 1910 BAM M6 动力学参数**，
+作为飞特版的仿真训练基线。感谢 LuwuDynamics 的分享；这份参数不是我们自行辨识的结果。
+出处、固定版本、原文件校验值和 Apache-2.0 许可见[参数来源说明](docs/HD-1910-M6参数来源.md)。
 
-HD-1910 跟 XL330 的力矩、减速比、阻尼都不一样，官方预训练的策略大概率要重训。
-重训要的参数（力矩常数、速度限、PID、摩擦）整理在[训练前数据清单](docs/HD-1910训练前数据清单.md)里，
-能测的已经测了，不能测的标了待办。
+完整训练工程已放入本仓库 **[`software/training/`](software/training/)**，一次克隆即可取得
+代码、参数和仿真模型；[运行说明与初始化修复解释](software/training/docs/hd1910-baseline.md)给出具体命令。
+训练沿用 [Pollen Robotics/microduck_rl](https://github.com/pollen-robotics/microduck_rl) 和
+[Rhoban/BAM](https://github.com/Rhoban/bam)。已通过接入测试和短训练检查，尚无本机实测通过的走路策略。
+实机测试仍需完成**零位、关节方向、IMU 和主控接入**，并核对本机质量惯量与舵机响应。
 
 **[HD-1910 训练前数据清单](docs/HD-1910训练前数据清单.md)**　·
 [执行器选型](docs/执行器选型.md)
@@ -155,7 +169,19 @@ HD-1910 跟 XL330 的力矩、减速比、阻尼都不一样，官方预训练�
 | 谁 | 贡献了什么 |
 |---|---|
 | [@yoyojacky](https://github.com/yoyojacky) | **Rust 版飞特舵机测试工具**（[PR #27](https://github.com/fanhao375/microduck-replica/pull/27)，已合并）。自己实现的最小 STS/SCS 协议（帧打包、校验和、ping、读写寄存器、状态解析），命令行可以扫描总线（带进度条）、读状态、转到指定位置、单颗测试和批量测试，输出位置偏差、峰值电流、峰值负载、电压温度并判定 PASS/FAIL。台架验收一条命令出汇总表 → [`tools/sts3215Servo_testtool/`](tools/sts3215Servo_testtool/) |
+| [@Abo1ish](https://github.com/Abo1ish) | **IMU 小板固件 + 调试台姿态显示**（[PR #32](https://github.com/fanhao375/microduck-replica/pull/32)，已合并）。给官方没开源的那块 imu_to_dxl 写了 STM32G031 固件底子，在实板上验证过，带主机端测试和一份写清楚边界的 [`VALIDATION.md`](hardware/imu_to_dxl/firmware/VALIDATION.md) → [`hardware/imu_to_dxl/firmware/`](hardware/imu_to_dxl/firmware/)；再用 J-Link 把 IMU 姿态实时读出来并进了网页调试台，3D 鸭子的躯干跟着真板子转（`--imu-jlink`，没板子也能用 `--imu-demo` 先看效果）→ [`tools/servo-web/`](tools/servo-web/) |
 | 微信群的鸭友 | **Radxa Zero 3W V1.12J 的启动方案**。这批板子（WiFi 换成 AIC8800DS2）光换瑞莎引导还是起不来，他实测出设备树也得换成瑞莎 B1 的：**B1 引导 + B1 DTB + Armbian 6.1.115 内核 + Trixie 系统**，跑通了 → 写进了[踩坑记录](踩坑记录.md#软件)和[镜像使用说明](tools/radxa/镜像使用说明.md#6-如果你的板子不是这一批) |
+
+### 鸭友的项目
+
+有些鸭友是自己单独开仓库做的，不在这个仓库里，但跟鸭子直接相关、做得好的，放这儿推一下：
+
+| 项目 | 作者 | 做什么的 |
+|---|---|---|
+| [microduck-color-studio](https://github.com/LathamZ/microduck-color-studio)（[在线试用](https://lathamz.github.io/microduck-color-studio/)） | [@LathamZ](https://github.com/LathamZ) | **鸭子的 3D 配色工作室，打印前先在网页里把颜色定好。** 70 个零件逐件上色，选材质（PLA / 哑光 / PETG / 金属 / 碳纤 / TPU）和灯光看效果；填上自己手里有哪些耗材，它按库存推荐配色（只用已有 / 补一色 / 丙烯点缀）。还能导入自己的 3MF（比如飞特版），导出**带颜色的多盘 3MF** 和按件拆好的 STL，拓竹 P1S / A1 mini / H2D 有预设。中英文界面，手机上也能看 |
+| [MICDUCK_FTHD1901_REBUILD](https://github.com/fengj4780-sudo/MICDUCK_FTHD1901_REBUILD) | [@fengj4780-sudo](https://github.com/fengj4780-sudo) | **飞特版结构改进 + 可选 CNC 加强件。** 在我们的[可编辑 SolidWorks 图纸](https://github.com/fanhao375/microduck-replica-cad)基础上接着改：适配飞特舵机（他仓库里写作 HD1901，零件文件用的是 HD-1910-C001），加强了薄弱件，修了装配干涉和几个破损的模型。腿部 **5 个零件可以换成 CNC 件**让受力更合理（还在打样测试，他估算 5 件含运费约 45 元）；不做 CNC 直接打印也行，强度也比原版好。附一键打印的 3MF（拓竹 H2D、0.4 mm、5 盘）和改好的 SolidWorks 图纸 |
+
+做了跟鸭子有关的项目（工具、教程、改装、策略……），开 issue 贴个链接，我们加进来。
 
 想加进来：直接开 [issue](https://github.com/fanhao375/microduck-replica/issues) 或提 PR。
 硬件、固件、算法、文档、实测数据都算 —— **实测数据尤其欢迎**，这个仓库的规矩是结论如实记录，无论正反。
@@ -212,39 +238,18 @@ HD-1910 跟 XL330 的力矩、减速比、阻尼都不一样，官方预训练�
 
 > ⚠️ 里面有两条会让人买错的更正：**电池是 NP-F550 不是 F970**、**XL330 被超压运行**。
 
-## 3D 打印件
+## 3D 打印件与 CAD 装配体
 
-整机全部 STL 单件，按「要打印 / 买现成的」分好类，中英双语命名 —— [`print/`](print/)
+**统一到 [fanhao375/microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad) 下载。** SolidWorks、STEP、打印工程、装配 BOM 和安装说明在同一个仓库维护。
 
-| 目录 | 数量 |
+| 版本 | 截至 2026-09-28 的 CAD 发布 |
 |---|---|
-| 🖨️ [**拓竹 MakerWorld · microduck**](https://makerworld.com.cn/zh/models/2963569-microduck#profileId-3478428) | **不想看图直接打** —— 一键切片，Bambu 打印机直接开 |
-| [`print/打印件/`](print/打印件/) | **30 种 / 41 件**结构件 |
-| [`print/标准件-无需打印/`](print/标准件-无需打印/) | **9 个**外购件模型（对位用） |
+| 飞特 HD-1910 | [v2.1](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v2.1) |
+| Dynamixel XL330 | [v1.1](https://github.com/fanhao375/microduck-replica-cad/releases/tag/v1.1) |
 
-> 上游的 XL330 台架测试夹具在另一个目录，本来就不属于机器人。打印建议与数量表见 [`print/README.md`](print/README.md)，采购见 [机械采购清单](docs/机械采购清单.md)。
+本仓旧 `print/` 单件和 `cad/` 装配 STL 来自上游仿真模型，未同步实物改件，现已移除；这两个目录保留下载指引。**不要把飞特和 XL330 配合件混用，也不要把本仓训练/网页网格用于打印。**
 
-## CAD 装配体
-
-`cad/` 下是**已应用世界变换**的 STL —— 直接导入 CAD 就是装好的样子，
-不用自己摆位置（上游那 47 个 STL 都是零件自身坐标系的，直接导入会全部堆在原点）。
-
-- `00_Microduck_整机装配体.stl` —— 整机单文件，796792 三角面
-- `01` ~ `15` —— 按刚体分组的 15 个部件，文件名即部件名
-- `零件对照表.json` —— 每个部件由哪些上游源网格组成
-
-单位 **毫米**。可直接用 FreeCAD / Fusion 360 / SolidWorks / Blender / 各类切片软件打开。
-
-### 📐 要可编辑的参数模型？在另一个仓库
-
-本仓库的 `cad/` 与 `print/` 都是**网格（STL）**—— 能打印、能看、能测量，但**改不动**。
-
-**[fanhao375/microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad)**
-是配套的三维图纸仓库，放的是**可编辑的 SolidWorks 源文件**（📦 **压缩包在那个仓库的 Releases 页，不在文件列表里**）：
-16 个装配体 + 40 个零件，外加一份 **21 页的装配安装说明书**（含每个组件的步骤、配图与注意事项）。
-
-> 那套图纸由 **[机械行者Robo](https://github.com/fanhao375/microduck-replica-cad#图纸作者机械行者Robo)**
-> 建模并编写说明书 —— 想改尺寸、改壁厚、重新出工程图的，从那边拿源文件。
+CAD 仓库的 09-15 旧 3MF 尚未包含 v2.1 合体轮胎；请核对具体附件版本，详见 [打印说明](print/README.md)。图纸与说明书由 **机械行者Robo** 建模整理，来源与许可见 CAD 仓库。
 
 ---
 
@@ -326,7 +331,7 @@ HD-1910 跟 XL330 的力矩、减速比、阻尼都不一样，官方预训练�
 
 | | 方案 |
 |---|---|
-| 机械 | 用本仓库的 STL 与装配图，几何完全照抄 |
+| 机械 | 到 [CAD 仓库](https://github.com/fanhao375/microduck-replica-cad) 选择对应舵机版本的模型与装配说明 |
 | 舵机 | XL330 × 15，市售件照买 |
 | 主控 | **Radxa Zero 3W**，市售模块，与官方同款 |
 | IMU 板 | 自己画 `imu_to_dxl`：LSM6DSV16X + MCU + 半双工收发器，协议已还原 |
@@ -381,14 +386,14 @@ Microduck 的东西散在 GitHub 多个组织和 HuggingFace 三种资源里，*
 ## 重现
 
 ```bash
-# 1. 拉上游仓库（源码与仿真资产不重复托管，打印件除外 —— 见 NOTICE.md）
+# 1. 为下列装配图生成脚本拉取上游（训练工程已在 software/training/，无需此步骤）
 bash scripts/fetch_upstream.sh
 
 # 2. 重新生成装配图
 python scripts/render_assembly.py upstream/microduck_rl assembly-drawings
 
-# 3. 重新导出 CAD 装配体
-python scripts/export_assembly_stl.py upstream/microduck_rl cad
+# 3. 导出上游装配分析预览（不作为实物打印件）
+python scripts/export_assembly_stl.py upstream/microduck_rl analysis-output/cad-upstream
 
 # 4. 重新扫描孔特征
 python scripts/analyze_holes.py upstream/microduck_rl/src/mjlab_microduck/robot/microduck/assets
@@ -401,7 +406,7 @@ python scripts/analyze_holes.py upstream/microduck_rl/src/mjlab_microduck/robot/
 ## 许可证
 
 - `scripts/` —— Apache-2.0
-- `assembly-drawings/` `cad/` —— **CC BY-SA-NC 4.0**（上游 3D 模型为 CC BY-SA-NC，
+- `assembly-drawings/` 及保留的仿真网格 —— **CC BY-SA-NC 4.0**（上游 3D 模型为 CC BY-SA-NC，
   依 ShareAlike 条款衍生作品须沿用同协议，**不得商用**）
 
 详见 [NOTICE.md](NOTICE.md)。本项目与 Pollen Robotics 无隶属关系，未获其背书。
