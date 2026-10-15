@@ -4,6 +4,8 @@
 
 > **模型与打印文件统一入口：[microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad)。** 飞特 / XL330 请选对应版本；本仓旧打印 STL 已移除，避免误打。
 
+> **装配视频教程：[B 站合集《MicroDuck 从零安装教程》](https://space.bilibili.com/312747174/lists/9279084?type=season)**，图纸作者「机械行者Robo」一集装一个部件，共 8 集，已更新 6 集 → [分集目录](#-装配视频教程)
+
 > 对 [Pollen Robotics Microduck](https://pollen-robotics.com/microduck/) 的第三方复刻研究。
 > 从官方公开的 MJCF 仿真模型反推出**装配图、爆炸图和可直接导入 CAD 的装配体**。
 
@@ -44,6 +46,29 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 
 ---
 
+## 📺 装配视频教程
+
+**[B 站合集《MicroDuck 从零安装教程》](https://space.bilibili.com/312747174/lists/9279084?type=season)** —— CAD 图纸和装配 BOM 的作者 **机械行者Robo** 录的，从零件清单讲起，一集装一个部件。共 8 集，截至 2026-10-12 已更新 6 集：
+
+| 集 | 内容 | 时长 |
+|---|---|---|
+| [第 1 集](https://www.bilibili.com/video/BV1RoHX68EFV/) | 零件清单：头部、颈部、左右腿、脚掌各组件和舵机配件 | 1:32 |
+| [第 2 集](https://www.bilibili.com/video/BV1Xppb6tECr/) | 小腿安装 | 2:21 |
+| [第 3 集](https://www.bilibili.com/video/BV1ycpb6yEwB/) | 大腿安装 | 5:13 |
+| [第 4 集](https://www.bilibili.com/video/BV1Kwpg6wE9G/) | 躯干组件安装 | 2:29 |
+| [第 5 集](https://www.bilibili.com/video/BV1EEpg6nEkD/) | 颈部安装 | 0:40 |
+| [第 6 集](https://www.bilibili.com/video/BV1aKpE6hEzj/) | 头部安装 | 5:50 |
+
+打印件和外购件按 [CAD 仓库](https://github.com/fanhao375/microduck-replica-cad)里的装配 BOM 备齐再开装。后面几集也会更新在下面这几个账号上：
+
+<table align="center">
+<tr>
+<td align="center"><a href="https://space.bilibili.com/312747174"><img src="assets/social/bilibili-qr.jpg" alt="B 站：机械行者Robo" height="280"></a><br><sub><b>B 站</b> · 机械行者Robo<br>UID 312747174</sub></td>
+<td align="center"><a href="https://www.xiaohongshu.com/user/profile/5ad950114eacab046016f038"><img src="assets/social/xiaohongshu-qr.jpg" alt="小红书：机械行者" height="280"></a><br><sub><b>小红书</b> · 机械行者<br>小红书号 270594280</sub></td>
+<td align="center"><a href="https://www.douyin.com/user/MS4wLjABAAAArLa_6yE3GE-AoRURoQnIHdbbI7yM-GHhzlgLZ-XbeYE"><img src="assets/social/douyin-qr.jpg" alt="抖音：机械行者Robo" height="280"></a><br><sub><b>抖音</b> · 机械行者Robo<br>抖音号 1852366168</sub></td>
+</tr>
+</table>
+
 ## 交流群
 
 有人在做同样的事，凑了个微信群一起讨论复刻进度、踩过的坑、元件采购。
@@ -53,11 +78,23 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 <div align="center">
   <img src="assets/wechat-group-10.png" alt="鸭子复刻群 10 微信二维码" width="280">
   <br>
-  <sub><b>鸭子复刻群 10 · 二维码有效期到 2026-10-08</b>（微信群码 7 天自动失效）<br>
+  <sub><b>鸭子复刻群 10 · 二维码有效期到 2026-10-18</b>（微信群码 7 天自动失效）<br>
   过期了请开个 <a href="https://github.com/fanhao375/microduck-replica/issues">issue</a> 说一声，我会换上新的</sub>
 </div>
 
 ## 最近更新
+
+**2026-10-14 晚 · kissqy 整套也能用 IMU 模块了（fork）**：kissqy 的一键整套只认舵机总线上的 IMU 小板，手上是现成 IMU 模块的用不了。我们给他的 robotd 加了「IMU 模块直接接主板 I²C」（BNO085 / LSM6DSV16X），公开在我们自己的 fork [fanhao375/Microduck-kissqy](https://github.com/fanhao375/Microduck-kissqy)（分支 `hd1910-v167-trunk-imu-i2c`，基于他 10-14 发的 V167）。**这不是 kissqy 的官方版本**，出了问题到本仓库反馈。BNO085 在我们第一台上跑过（V164 上）；合到 V167 以后只过了单元测试，**还没上真机**，LSM6DSV16X 也没上过真机，我们今晚在第一台上实测，结果会更新到这里。怎么接线、编译、用安装脚本装、确认 IMU 方向，见 [IMU-MODULE.md](https://github.com/fanhao375/Microduck-kissqy/blob/hd1910-v167-trunk-imu-i2c/IMU-MODULE.md)。顺带：kissqy 的 V167「修复鸭身抖动」是每次上力把舵机 D 写成 0、转矩限制写成 1000，跟我们 10-13 的结论一致；用 IMU 模块的鸭子**别直接点他中控的「安装 / 升级固件」**，会把 IMU 支持冲掉。
+
+**2026-10-14 · 飞特官方 HD-1910 BAM 舵机模型**：飞特 9 月底在 Gitee 公开了 [ftservo/ftservo-bam](https://gitee.com/ftservo/ftservo-bam)（Apache-2.0，Rhoban/BAM 的派生），有 HD-1910 在 7.4 V 下辨识的 m1～m6 参数和专门的 HD-1910 控制模型。之前大家训练用的是陆吾（LuwuDynamics）公开的 1910 M6，现在多了一份厂家参数，可以对比着选。两份差别不小（电机电阻：飞特 2.97 Ω、陆吾 4.91 Ω；推算堵转力矩：飞特 1.37、陆吾 0.91 N·m），**我们还没在真机上验证哪份更准**。飞特的录数据脚本只设 P、不设 D，舵机多半是出厂 D=40，用它训的模型上机前先确认 D。加载、换算系数等接入细节见[两份参数对比与接入说明](docs/HD-1910-M6参数来源.md#飞特官方-hd-1910-bam)。
+
+**2026-10-13 夜 · 掉电、舵机 D 与蹭地**：新旧卡都会在走路时整机掉电，是供电撑不住，不是软件。走路发颤跟舵机的 D（硬件阻尼）有关：训练用的舵机模型里没有 D，D 改成 0 后高频颤从 51% 降到 4～8%，我们现在用 P3 / D0 / 转矩限制 700。蹭地是两只脚都只抬了仿真的一半，D=0 后左脚还会脚尖朝下，下一步试 D=5～10。另外，kissqy 一键镜像（V164）不写 D 和转矩限制，中控里改了没效果。[完整记录](docs/HD1910-20261013-夜-掉电-舵机D与蹭地.md) · [软件从哪来、我们改了什么](docs/软件来源与我们的改动.md) · [步态分析脚本](tools/gait-analysis/)。
+
+**2026-10-12 夜 · IMU 校准后站稳、开始迈步**：模型一接管就往后猛冲的根因找到了，是 **IMU 模块装歪了约 8.5°**。模型训练时站 HOME 机身是水平的，IMU 却一直说「前倾 8.5°」，模型就拼命往后救。用仿真按真机关节角算出「应有倾斜」，把偏差补进 IMU 安装参数后，模型接管 70 秒没倒、机身倾斜平均 0.2°，推摇杆两腿开始交替迈步（往前走了多少还没量）。顺带查清了网页手柄按了没反应的四层原因，改用蓝牙手柄直连。[完整记录与 IMU 零点校准方法](docs/HD1910-20261012-夜-IMU校准与首次迈步.md) · [分析脚本](tools/radxa/onboard-analysis/) · [踩坑记录](踩坑记录.md)。
+
+**2026-10-12 · 主控配置勘误**：此前建议买 Radxa Zero 3W「2G / 16G eMMC」，**没必要，让大家多花了钱**。官方资料只写了 1 GB 内存、32 GB 存储；我们第一台就是 2G、无 eMMC、插 microSD 卡，跑 kissqy 整套实测只用了 175 MB 内存、3.3 GB 存储。复刻买 **1G 或 2G 的无 eMMC 版 + 32 GB microSD 卡**即可，只走官方渠道（安联新创淘宝店、瑞莎官方淘宝 / 京东店），别去小店多花几倍的钱。已经买了 2G/16G 的照样能用。[买哪个配置、去哪买](docs/电控采购清单.md#该买哪个配置)。
+
+**2026-10-12 · 装配视频教程**：机械行者Robo 在 B 站更新《MicroDuck 从零安装教程》，已出零件清单、小腿、大腿、躯干、颈部、头部 6 集（共 8 集），小红书、抖音也能找到。[分集目录与关注方式](#-装配视频教程)。
 
 **2026-09-29 · 镜像登录勘误**：旧公开镜像第一次用 **`root / 1234`** 登录；完成 Armbian 向导后才创建 `duck / duck1234` 并更换 root 密码，请随即修改默认密码。旧卡仍需补 `wlan0` DHCP。[使用说明](tools/radxa/镜像使用说明.md)已更正；新的 [DHCP 修复候选镜像](https://github.com/fanhao375/microduck-replica/releases/tag/radxa-zero3w-armbian-20260929)经过离线校验，**尚未对这份新产物烧卡实测**。基础镜像不含机器人运行时或网页调试台。
 
@@ -101,6 +138,9 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 可编辑的 SolidWorks 图纸也出了飞特版（`-FT` 后缀），改了什么、为什么，
 在图纸仓里写清楚了。
 
+**从零装一只的视频教程**也在出：[B 站合集](https://space.bilibili.com/312747174/lists/9279084?type=season)，已更新到第 6 集（头部）。
+
+**[装配视频教程](#-装配视频教程)**　·
 **[构建日志](构建日志.md)**　·
 **[飞特版 SolidWorks 图纸](https://github.com/fanhao375/microduck-replica-cad)**　·
 **[模型与打印文件](https://github.com/fanhao375/microduck-replica-cad)**　·
@@ -112,7 +152,20 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 <tr>
 <td width="50%" valign="top">
 
-### 💻 软件 · 网页调试台，串口直连 15 颗舵机
+### 💻 软件 · 我们的 fork：IMU 模块直接上
+
+**不用做总线 IMU 小板，也不用刷固件**：买一块 BNO085（或 LSM6DSV16X）模块，4 根线接到主板 I²C，装上我们的 fork，鸭子就能站、能走。
+
+- **IMU 模块直连主板**：BNO085 / LSM6DSV16X，`robotd.toml` 里一行切换；
+- **一键安装脚本**：先检查、再备份，中途任何一步失败自动撤回；
+- **中文说明**：接线、编译、安装、确认 IMU 方向，一步一步写清楚；
+- **跟着上游最新版走**，在我们自己的鸭子上实测，踩过的坑都记在本仓库。
+
+👉 **[进入我们的 fork：fanhao375/Microduck-kissqy](https://github.com/fanhao375/Microduck-kissqy)**　·　[使用说明](https://github.com/fanhao375/Microduck-kissqy/blob/hd1910-v167-trunk-imu-i2c/IMU-MODULE.md)
+
+状态：BNO085 已在我们第一台鸭子上跑过；当前版本今晚上真机实测，结果更新在上面的「最近更新」。基于 [kissqy/Microduck-kissqy](https://github.com/kissqy/Microduck-kissqy) 的 V167（robotd 等为 Apache-2.0），不是 kissqy 的官方版本，有问题请到本仓库反馈。
+
+#### 网页调试台：串口直连 15 颗舵机
 
 <p align="center"><a href="tools/servo-web/"><img src="assets/servo-web.png" alt="网页调试台：滑块、3D 鸭子、重心投影" width="420"></a></p>
 
@@ -122,21 +175,25 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 后端不依赖飞特 SDK，[`feetech.py`](tools/servo-web/feetech.py) 按 2026 版协议手册直接收发包，一百多行。
 配套一个**协议级舵机模拟器**，不接硬件就能把校准、改 ID、写寄存器跑一遍自检。
 
-接官方运行时的 `FeetechIo`（`RobotIo` 接缝，rustypot 协议 v1）已经写完、跟上了官方 0.14.1，等零位校准做完上板 —— 代码在 fork 的 **[`feetech` 分支](https://github.com/fanhao375/microduck/tree/feetech)**。
-
+**[我们的 fork](https://github.com/fanhao375/Microduck-kissqy)**　·
 **[网页调试台](tools/servo-web/)**　·
 **[飞特适配架构](software/飞特适配架构.md)**　·
-**[FeetechIo 代码](https://github.com/fanhao375/microduck/tree/feetech)**　·　
 [飞特官方资料](docs/飞特资料/)（协议、内存表）
 
 </td>
 <td width="50%" valign="top">
 
-### 🧠 算法 · 接入公开的 1910 M6 参数
+### 🧠 算法 · 舵机参数与训练流程
 
 采用 **[LuwuDynamics/xgoduck_rl](https://github.com/LuwuDynamics/xgoduck_rl) 公开的 1910 BAM M6 动力学参数**，
 作为飞特版的仿真训练基线。感谢 LuwuDynamics 的分享；这份参数不是我们自行辨识的结果。
 出处、固定版本、原文件校验值和 Apache-2.0 许可见[参数来源说明](docs/HD-1910-M6参数来源.md)。
+
+**飞特官方也公开了 HD-1910 的 BAM**：[ftservo/ftservo-bam](https://gitee.com/ftservo/ftservo-bam)（Gitee，Apache-2.0），厂家自己辨识的参数和专门的控制模型，可以跟陆吾那份对比着选；我们还没验证哪份更准，接入时要注意的几点见[参数来源说明](docs/HD-1910-M6参数来源.md#飞特官方-hd-1910-bam)。
+
+**具体训练流程推荐参考 [kissqy / Microduck-kissqy](https://github.com/kissqy/Microduck-kissqy)**，感谢 [@kissqy](https://github.com/kissqy) 的分享！
+项目提供 HD1910 的训练中控与使用说明，涵盖训练环境准备、训练任务管理和 ONNX 模型导出，
+并配套机器人中控、固件及演示视频。
 
 完整训练工程已放入本仓库 **[`software/training/`](software/training/)**，一次克隆即可取得
 代码、参数和仿真模型；[运行说明与初始化修复解释](software/training/docs/hd1910-baseline.md)给出具体命令。
@@ -180,6 +237,7 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 |---|---|---|
 | [microduck-color-studio](https://github.com/LathamZ/microduck-color-studio)（[在线试用](https://lathamz.github.io/microduck-color-studio/)） | [@LathamZ](https://github.com/LathamZ) | **鸭子的 3D 配色工作室，打印前先在网页里把颜色定好。** 70 个零件逐件上色，选材质（PLA / 哑光 / PETG / 金属 / 碳纤 / TPU）和灯光看效果；填上自己手里有哪些耗材，它按库存推荐配色（只用已有 / 补一色 / 丙烯点缀）。还能导入自己的 3MF（比如飞特版），导出**带颜色的多盘 3MF** 和按件拆好的 STL，拓竹 P1S / A1 mini / H2D 有预设。中英文界面，手机上也能看 |
 | [MICDUCK_FTHD1901_REBUILD](https://github.com/fengj4780-sudo/MICDUCK_FTHD1901_REBUILD) | [@fengj4780-sudo](https://github.com/fengj4780-sudo) | **飞特版结构改进 + 可选 CNC 加强件。** 在我们的[可编辑 SolidWorks 图纸](https://github.com/fanhao375/microduck-replica-cad)基础上接着改：适配飞特舵机（他仓库里写作 HD1901，零件文件用的是 HD-1910-C001），加强了薄弱件，修了装配干涉和几个破损的模型。腿部 **5 个零件可以换成 CNC 件**让受力更合理（还在打样测试，他估算 5 件含运费约 45 元）；不做 CNC 直接打印也行，强度也比原版好。附一键打印的 3MF（拓竹 H2D、0.4 mm、5 盘）和改好的 SolidWorks 图纸 |
+| [Microduck-kissqy](https://github.com/kissqy/Microduck-kissqy) | [@kissqy](https://github.com/kissqy) | **飞特 HD1910 的训练流程与控制实现参考。** 提供训练中控、训练环境准备与任务管理说明、ONNX 模型导出，以及机器人中控、固件和演示视频；算法部分的具体训练流程推荐参考这个项目 |
 
 做了跟鸭子有关的项目（工具、教程、改装、策略……），开 issue 贴个链接，我们加进来。
 
@@ -249,7 +307,7 @@ MJCF 里包含了完整的运动学树：每个零件挂在谁身上、相对位
 
 本仓旧 `print/` 单件和 `cad/` 装配 STL 来自上游仿真模型，未同步实物改件，现已移除；这两个目录保留下载指引。**不要把飞特和 XL330 配合件混用，也不要把本仓训练/网页网格用于打印。**
 
-CAD 仓库的 09-15 旧 3MF 尚未包含 v2.1 合体轮胎；请核对具体附件版本，详见 [打印说明](print/README.md)。图纸与说明书由 **机械行者Robo** 建模整理，来源与许可见 CAD 仓库。
+CAD 仓库的 09-15 旧 3MF 尚未包含 v2.1 合体轮胎；请核对具体附件版本，详见 [打印说明](print/README.md)。图纸与说明书由 **机械行者Robo** 建模整理，来源与许可见 CAD 仓库。装配过程可以对照[视频教程](#-装配视频教程)。
 
 ---
 
@@ -282,7 +340,7 @@ CAD 仓库的 09-15 旧 3MF 尚未包含 v2.1 合体轮胎；请核对具体附�
 | | |
 |---|---|
 | **主控** | **Radxa Zero 3W** —— 市售模块，**不是定制载板** |
-| SoC | RK3566，四核 Cortex-A55，Mali-G52，0.8 TOPS NPU。官方公布 1 GB / 32 GB eMMC；复刻建议 2G/16G，见 [电控采购清单](docs/电控采购清单.md) |
+| SoC | RK3566，四核 Cortex-A55，Mali-G52，0.8 TOPS NPU。官方公布 1 GB 内存 / 32 GB 存储；复刻买 1G 或 2G 的**无 eMMC** 版 + 32 GB microSD 卡即可，只走官方渠道，见 [电控采购清单](docs/电控采购清单.md#该买哪个配置) |
 | **舵机总线** | **单线半双工 TTL** —— **不是** RS-232，**也不是** RS-485。Dynamixel Protocol V2 @ 1 Mbps，走 `/dev/ttyS2` |
 | **自制板 1** | **`imu_to_dxl` v2** —— 一颗会说 Dynamixel 的 LSM6DSV16X：总线 ID 200、寄存器 124，12 字节块在**同一次** `sync_read` 里和舵机一起读回 |
 | **自制板 2** | **RPI Robot HAT** —— TLV320AIC3104 @ 0x18、一颗休眠的 BMI088、接 ToF 的 Stemma 座。**官方已开源**（[`elec_RPI_Robot_HAT`](https://github.com/pollen-robotics/elec_RPI_Robot_HAT)） |

@@ -32,4 +32,6 @@
 *.eprj2 binary
 *.epro2 binary
 *.sh text eol=lf
+# systemd 单元直接拷到主板用，CRLF 会让 systemd 读错
+*.service text eol=lf
 *.ps1 text eol=crlf

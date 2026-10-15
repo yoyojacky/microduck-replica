@@ -1,0 +1,13 @@
+[Unit]
+Description=Microduck 上机测试记录（50 Hz 状态 + 每 0.5 s 电压、温度、WiFi、蓝牙；只读，每秒写盘）
+After=robotd.service
+Wants=robotd.service
+[Service]
+Type=simple
+User=duck
+ExecStartPre=/bin/sleep 5
+ExecStart=/bin/bash -c "T=$(date +%%Y%%m%%d-%%H%%M%%S)-b$(cut -c1-6 /proc/sys/kernel/random/boot_id); python3 /home/duck/tools/duck_health_log.py 7200 /home/duck/r17/rec/health-$T.csv & exec python3 /home/duck/tools/duck_rec.py 7200 /home/duck/r17/rec/run-$T.jsonl"
+Restart=always
+RestartSec=5
+[Install]
+WantedBy=multi-user.target

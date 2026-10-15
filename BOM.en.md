@@ -70,7 +70,7 @@ European inc-VAT retail runs **€603–629** (far above).
 
 | Part | Model | Qty | Basis / note |
 |---|---|---|---|
-| Compute | **Radxa Zero 3W** | 1 | device tree `compatible = "radxa,zero-3w"`. ⚠️ Several RAM/eMMC SKUs — the official spec page (2026-08-27) states **1 GB / 32 GB**, though the source tree carries no SKU evidence; **2G/16G recommended for a replica**. the OS image must carry the Rockchip vendor kernel (Armbian family) or the NPU does not exist |
+| Compute | **Radxa Zero 3W** | 1 | device tree `compatible = "radxa,zero-3w"`. Several RAM/eMMC SKUs. The official press kit states **1 GB RAM, 32 GB storage** (not necessarily eMMC); **a 1 GB or 2 GB board without eMMC plus a 32 GB microSD card is enough** — buy from official distributors (corrected 2026-10-12; the earlier 2G/16G eMMC advice was unnecessary). the OS image must carry the Rockchip vendor kernel (Armbian family) or the NPU does not exist |
 | Camera | Raspberry Pi Camera v2 (**IMX219**) | 1 | `setup-board.sh` applies the `radxa-zero3-rpi-camera-v2` overlay. ⚠️ **Mounted off-axis; corrected in software.** `media-bringup.md` says the alpha was upside down (`180`), but the current code default in `mediad/src/main.rs` is `--rotate 90`. Check against your build |
 | Depth | **VL53L8CX** or VL53L5CX module | 1 | firmware supports both, identified by revision ID; address `0x29` or `0x52`; Stemma/Qwiic |
 | Battery | **Sony NP-F550** (2S, 7.4 V) | 1 | ⚠️ see correction below |

@@ -42,6 +42,8 @@ This repository is what falls out of reading both.
 
 > **Models and print files: [microduck-replica-cad](https://github.com/fanhao375/microduck-replica-cad).** Select the Feetech or XL330 version there. Outdated printable STLs have been removed from this repository.
 
+> **Assembly videos: [the "MicroDuck from scratch" series on Bilibili](https://space.bilibili.com/312747174/lists/9279084?type=season)** (Chinese narration), by 机械行者Robo, who also made the CAD. One subassembly per episode; 6 of 8 out → [episode list](#-assembly-videos)
+
 ## Two tracks — pick one
 
 This repository covers two servo choices. **Mechanics, electronics and software all differ**, so decide before building:
@@ -60,6 +62,29 @@ The selection argument is in [Actuator Selection](docs/actuator-selection.en.md)
 
 ---
 
+## 📺 Assembly videos
+
+**[Bilibili series "MicroDuck 从零安装教程" (assembly from scratch)](https://space.bilibili.com/312747174/lists/9279084?type=season)** — recorded by **机械行者Robo**, who modelled the CAD and wrote the assembly BOM. It starts from the parts list and builds one subassembly per episode. Narration is in Chinese, but the hands-on footage is easy to follow. 6 of 8 episodes are out as of 2026-10-12:
+
+| Episode | Content | Length |
+|---|---|---|
+| [1](https://www.bilibili.com/video/BV1RoHX68EFV/) | Parts list: head, neck, both legs, feet and servo hardware | 1:32 |
+| [2](https://www.bilibili.com/video/BV1Xppb6tECr/) | Lower legs | 2:21 |
+| [3](https://www.bilibili.com/video/BV1ycpb6yEwB/) | Thighs | 5:13 |
+| [4](https://www.bilibili.com/video/BV1Kwpg6wE9G/) | Torso | 2:29 |
+| [5](https://www.bilibili.com/video/BV1EEpg6nEkD/) | Neck | 0:40 |
+| [6](https://www.bilibili.com/video/BV1aKpE6hEzj/) | Head | 5:50 |
+
+Get the printed and purchased parts from the assembly BOM in the [CAD repository](https://github.com/fanhao375/microduck-replica-cad) before you start. The remaining episodes will appear on the same accounts — Bilibili, Xiaohongshu (RED) and Douyin:
+
+<table align="center">
+<tr>
+<td align="center"><a href="https://space.bilibili.com/312747174"><img src="assets/social/bilibili-qr.jpg" alt="Bilibili: 机械行者Robo" height="280"></a><br><sub><b>Bilibili</b> · 机械行者Robo<br>UID 312747174</sub></td>
+<td align="center"><a href="https://www.xiaohongshu.com/user/profile/5ad950114eacab046016f038"><img src="assets/social/xiaohongshu-qr.jpg" alt="Xiaohongshu: 机械行者" height="280"></a><br><sub><b>Xiaohongshu</b> · 机械行者<br>ID 270594280</sub></td>
+<td align="center"><a href="https://www.douyin.com/user/MS4wLjABAAAArLa_6yE3GE-AoRURoQnIHdbbI7yM-GHhzlgLZ-XbeYE"><img src="assets/social/douyin-qr.jpg" alt="Douyin: 机械行者Robo" height="280"></a><br><sub><b>Douyin</b> · 机械行者Robo<br>ID 1852366168</sub></td>
+</tr>
+</table>
+
 ## Community
 
 A WeChat group for people working on the same thing — build progress, pitfalls, sourcing.
@@ -69,11 +94,23 @@ The code below is for **Duck Replica Group 10** (WeChat disables QR joins once a
 <div align="center">
   <img src="assets/wechat-group-10.png" alt="Duck Replica Group 10 WeChat QR code" width="280">
   <br>
-  <sub><b>Duck Replica Group 10 · expires 2026-10-08</b> — WeChat group codes are valid for 7 days<br>
+  <sub><b>Duck Replica Group 10 · expires 2026-10-18</b> — WeChat group codes are valid for 7 days<br>
   If it has expired, open an <a href="https://github.com/fanhao375/microduck-replica/issues">issue</a> and I will post a fresh one</sub>
 </div>
 
 ## Latest
+
+**2026-10-14 evening — IMU modules for kissqy's full stack (fork):** kissqy's one-click stack only reads the IMU board on the servo bus, so a duck with a ready-made IMU module cannot use it. We added "IMU module on the board's own I²C" (BNO085 / LSM6DSV16X) to his robotd and published it in our fork [fanhao375/Microduck-kissqy](https://github.com/fanhao375/Microduck-kissqy) (branch `hd1910-v167-trunk-imu-i2c`, on top of his 10-14 V167). **It is not an official kissqy release** — report problems here. BNO085 has run on our first robot (on V164); the V167 merge has only passed unit tests and **has not run on a robot yet**, nor has LSM6DSV16X. We test it on our robot tonight and will update this note. Wiring, build, the installer and confirming the IMU mount: [IMU-MODULE.md](https://github.com/fanhao375/Microduck-kissqy/blob/hd1910-v167-trunk-imu-i2c/IMU-MODULE.md). Also: kissqy's V167 "body jitter fix" writes servo D=0 and torque limit 1000 on every arm, matching our 10-13 finding; a duck with an IMU module **must not use "install/upgrade firmware" in his console**, which would remove the module support.
+
+**2026-10-14 — Feetech's official HD-1910 BAM actuator model:** At the end of September Feetech published [ftservo/ftservo-bam](https://gitee.com/ftservo/ftservo-bam) on Gitee (Apache-2.0, a fork of Rhoban/BAM), with m1–m6 parameters for the HD-1910 identified at 7.4 V and a dedicated HD-1910 controller model. Until now everyone has trained with the 1910 M6 parameters published by LuwuDynamics; the manufacturer's own set is now available to compare. The two differ substantially (motor resistance: Feetech 2.97 Ω, LuwuDynamics 4.91 Ω; computed stall torque: Feetech 1.37, LuwuDynamics 0.91 N·m), and **we have not yet verified on hardware which one matches the real servo better**. Feetech's recording script sets P but not D, so the servos were most likely at the factory D=40 — confirm D before deploying a policy trained on it. Loading and gain-conversion details: [comparison and integration notes](docs/HD-1910-M6参数来源.md#飞特官方-hd-1910-bam) (Chinese).
+
+**2026-10-13 night — Brownouts, servo D and foot scraping:** Both cards brown out while walking; the supply cannot hold the current spikes — it is not software. The walking jitter is linked to the servos' hardware D (damping): the actuator model used in training has no D term, and setting D=0 cut the high-frequency share of torso motion from 51% to 4–8%; we now run P3 / D0 / torque limit 700. The feet scrape because both lift only half as high as in simulation, and with D=0 the left toe also points down; next we try D=5–10. kissqy's one-click image (V164) does not write D or the torque limit, so changing them in the console has no effect. [Full record](docs/HD1910-20261013-夜-掉电-舵机D与蹭地.md) (Chinese) · [Where our software comes from and what we changed](docs/软件来源与我们的改动.md) (Chinese) · [Gait analysis scripts](tools/gait-analysis/).
+
+**2026-10-12 night — IMU calibrated, first stable stand and alternating steps:** The reason the walking policy charged backwards and fell as soon as it took over was an **IMU module mounted about 8.5° off**. The policy was trained with a level torso at HOME, but the IMU kept reporting an 8.5° forward lean, so the policy kept "recovering" backwards. We computed the expected torso attitude from the real joint angles in simulation and folded the difference into the IMU mounting quaternion. Afterwards the policy held the robot upright for 70 s (mean tilt 0.2°), and pushing the stick produced alternating steps (forward distance not measured yet). The web gamepad lag was traced to four layers; a Bluetooth gamepad paired directly to the robot bypasses all of them. [Full log and the IMU zero-calibration method](docs/HD1910-20261012-夜-IMU校准与首次迈步.md) (Chinese) · [analysis scripts](tools/radxa/onboard-analysis/).
+
+**2026-10-12 — Main board correction:** We previously recommended the Radxa Zero 3W "2 GB / 16 GB eMMC" SKU. **That was unnecessary and cost people money.** The official spec only says 1 GB RAM and 32 GB storage. Our first robot runs a 2 GB board **without eMMC** on a microSD card; with the full kissqy stack it uses 175 MB of RAM and 3.3 GB of storage. **A 1 GB or 2 GB board without eMMC plus a 32 GB microSD card is enough.** Buy from official distributors (ALLNET, Radxa's official stores) rather than resellers. A 2G/16G board you already bought works fine. See the [purchase guide](docs/电控采购清单.md#该买哪个配置) (Chinese).
+
+**2026-10-12 — Assembly videos:** 机械行者Robo is publishing a from-scratch assembly series on Bilibili. Six of eight episodes are out: parts list, lower legs, thighs, torso, neck and head. The same account is on Xiaohongshu and Douyin. See the [episode list](#-assembly-videos).
 
 **2026-09-29 — Image login correction:** The original public image requires **`root / 1234`** for the first login. Complete the Armbian wizard before using `duck / duck1234`; it also changes the root password. Change both default passwords immediately. The old image still needs the `wlan0` DHCP fix. The [guide](tools/radxa/镜像使用说明.md) is corrected, and a separate [DHCP fix candidate image](https://github.com/fanhao375/microduck-replica/releases/tag/radxa-zero3w-armbian-20260929) has passed offline checks; **this new artifact has not been flashed and boot-tested on hardware**. It contains neither the robot runtime nor the web servo console.
 
@@ -115,6 +152,9 @@ price, 2.5× the torque, running inside its rated voltage; the path argued in
 horns were remodelled and reprinted. The editable SolidWorks drawings have an FT variant
 (`-FT` suffix) with what changed and why.
 
+**A from-scratch assembly video series** is in progress: [Bilibili series](https://space.bilibili.com/312747174/lists/9279084?type=season), up to episode 6 (head).
+
+**[Assembly videos](#-assembly-videos)**　·
 **[Build Log](BUILD-LOG.en.md)**　·
 **[Feetech-variant SolidWorks drawings](https://github.com/fanhao375/microduck-replica-cad)**　·
 **[Models and print files](https://github.com/fanhao375/microduck-replica-cad)**　·
@@ -126,7 +166,20 @@ horns were remodelled and reprinted. The editable SolidWorks drawings have an FT
 <tr>
 <td width="50%" valign="top">
 
-### 💻 Software · web console driving 15 servos over the serial bus
+### 💻 Software · our fork: plug in an off-the-shelf IMU module
+
+**No bus IMU board to build, no firmware to flash:** wire a BNO085 (or LSM6DSV16X) module to the board's I²C with four wires, install our fork, and the duck stands and walks.
+
+- **IMU module straight on the board**: BNO085 / LSM6DSV16X, one line in `robotd.toml`;
+- **One-command installer**: checks first, backs up, and rolls back by itself if any step fails;
+- **Step-by-step instructions**: wiring, build, install, confirming the IMU mount;
+- **Tracks the latest upstream release**, tested on our own duck, every pitfall written up in this repository.
+
+👉 **[Open our fork: fanhao375/Microduck-kissqy](https://github.com/fanhao375/Microduck-kissqy)**　·　[Instructions](https://github.com/fanhao375/Microduck-kissqy/blob/hd1910-v167-trunk-imu-i2c/IMU-MODULE.md)
+
+Status: BNO085 has run on our first duck; the current build goes on the robot tonight, results in "Latest" above. Based on [kissqy/Microduck-kissqy](https://github.com/kissqy/Microduck-kissqy) V167 (robotd and friends are Apache-2.0); not an official kissqy release — please report problems here.
+
+#### Web console: 15 servos over the serial bus
 
 <p align="center"><a href="tools/servo-web/"><img src="assets/servo-web.png" alt="Web console: sliders, 3D duck, CoM projection" width="420"></a></p>
 
@@ -139,9 +192,7 @@ The backend does not use the Feetech SDK: [`feetech.py`](tools/servo-web/feetech
 2026 protocol manual directly in about a hundred lines. It ships with a **packet-level servo
 simulator**, so calibration, ID changes and register writes are self-tested with no hardware attached.
 
-`FeetechIo` for the official runtime (the `RobotIo` seam, rustypot protocol v1) is written and
-waiting on the zero calibration before it goes on the board.
-
+**[Our fork](https://github.com/fanhao375/Microduck-kissqy)**　·　
 **[Web console](tools/servo-web/)**　·　
 **[Feetech port architecture](software/飞特适配架构.md)**　(Chinese)　·　
 [Feetech official docs](docs/飞特资料/)
@@ -149,13 +200,22 @@ waiting on the zero calibration before it goes on the board.
 </td>
 <td width="50%" valign="top">
 
-### 🧠 Algorithms · public 1910 M6 parameter integration
+### 🧠 Algorithms · servo parameters and training workflow
 
 The Feetech simulation baseline adopts the **1910 BAM M6 actuator parameters published by
 [LuwuDynamics/xgoduck_rl](https://github.com/LuwuDynamics/xgoduck_rl)**. Thank you to LuwuDynamics
 for sharing them. These parameters were not independently identified by this replica project.
 The [provenance record](docs/HD-1910-M6参数来源.md) includes the pinned source revision,
 original-file checksum and Apache-2.0 license.
+
+**Feetech has also published an HD-1910 BAM model:** [ftservo/ftservo-bam](https://gitee.com/ftservo/ftservo-bam)
+(Gitee, Apache-2.0) with the manufacturer's own identified parameters and a dedicated controller model,
+so the two sets can be compared. We have not yet verified which matches the real servo better; see the
+[integration notes](docs/HD-1910-M6参数来源.md#飞特官方-hd-1910-bam) (Chinese).
+
+**For the training workflow, we recommend [kissqy / Microduck-kissqy](https://github.com/kissqy/Microduck-kissqy)**. Thanks to [@kissqy](https://github.com/kissqy) for sharing!
+The project provides an HD1910 training console and guides covering environment setup, training job management
+and ONNX export, alongside a robot control console, firmware and demo videos.
 
 The complete training project is included in **[`software/training/`](software/training/)**:
 one clone includes the source, actuator parameters and simulation models. See the
@@ -201,6 +261,7 @@ Some people build duck-related things in their own repos. The good ones get a sh
 |---|---|---|
 | [microduck-color-studio](https://github.com/LathamZ/microduck-color-studio) ([live demo](https://lathamz.github.io/microduck-color-studio/)) | [@LathamZ](https://github.com/LathamZ) | **A 3D color studio for the duck: settle the colors in your browser before you print.** Color each of the 70 parts, pick a material (PLA / matte / PETG / metallic / carbon fiber / TPU) and lighting to preview. Enter the filaments you already own and it recommends palettes from your stock (use what you have / add one color / acrylic accents). You can also import your own 3MF (e.g. the Feetech version) and export a **colored multi-plate 3MF** plus per-part STLs, with presets for Bambu P1S / A1 mini / H2D. Chinese and English UI, works on mobile |
 | [MICDUCK_FTHD1901_REBUILD](https://github.com/fengj4780-sudo/MICDUCK_FTHD1901_REBUILD) | [@fengj4780-sudo](https://github.com/fengj4780-sudo) | **Feetech-build structural rework with optional CNC reinforcement.** Builds on our [editable SolidWorks drawings](https://github.com/fanhao375/microduck-replica-cad): adapted to the Feetech servo (written as HD1901 in that repo; the part files are HD-1910-C001), weak parts reinforced, assembly interferences fixed and some broken models repaired. **Five leg parts can be made as CNC parts** for better load paths (still being prototyped; the author estimates about ¥45 for all five including shipping); printing them instead also works and is stronger than the original. Includes a one-click 3MF (Bambu H2D, 0.4 mm, 5 plates) and the reworked SolidWorks drawings (Chinese) |
+| [Microduck-kissqy](https://github.com/kissqy/Microduck-kissqy) | [@kissqy](https://github.com/kissqy) | **A reference for Feetech HD1910 training workflows and robot control.** Includes a training console, environment setup and job management guides, ONNX model export, a robot control console, firmware and demo videos. Recommended in the algorithms section for the practical training workflow |
 
 Built something for the duck (a tool, tutorial, mod, policy…)? Open an issue with the link and we'll add it.
 
@@ -274,7 +335,7 @@ parts list with LCSC numbers.
 
 The old `print/` parts and `cad/` assembly STLs came from upstream simulation geometry and did not include the physical CAD changes. Those files have been removed; the directories now contain download pointers. **Do not mix the two servo versions or print simulation/web-viewer meshes from this repository.**
 
-The CAD repository's older 09-15 3MF does not include the v2.1 combined wheel. Check the attachment version; see [printing notes](print/README.en.md). CAD modelling and assembly documentation are by **机械行者Robo**, with attribution and licensing in the CAD repository.
+The CAD repository's older 09-15 3MF does not include the v2.1 combined wheel. Check the attachment version; see [printing notes](print/README.en.md). CAD modelling and assembly documentation are by **机械行者Robo**, with attribution and licensing in the CAD repository. The [assembly videos](#-assembly-videos) walk through the build.
 
 ---
 
@@ -309,7 +370,7 @@ The CAD repository's older 09-15 3MF does not include the v2.1 combined wheel. C
 | | |
 |---|---|
 | **Main board** | **Radxa Zero 3W** — an off-the-shelf module, *not* a custom carrier |
-| SoC | RK3566, quad Cortex-A55, Mali-G52, 0.8 TOPS NPU, 1 GB RAM / 32 GB eMMC |
+| SoC | RK3566, quad Cortex-A55, Mali-G52, 0.8 TOPS NPU. Official: 1 GB RAM / 32 GB storage. For a replica a 1 GB or 2 GB board **without eMMC** plus a 32 GB microSD card is enough |
 | **Servo bus** | **Single-wire half-duplex TTL** — *not* RS-232, *not* RS-485. Dynamixel Protocol V2 @ 1 Mbps on `/dev/ttyS2` |
 | **Custom board 1** | **`imu_to_dxl` v2** — an LSM6DSV16X that speaks Dynamixel: bus ID 200, register 124, a 12-byte block read in the *same* `sync_read` as the servos |
 | **Custom board 2** | **RPI Robot HAT** — TLV320AIC3104 @ 0x18, a dormant BMI088, a Stemma header for the ToF. **Published by Pollen** ([`elec_RPI_Robot_HAT`](https://github.com/pollen-robotics/elec_RPI_Robot_HAT)) |

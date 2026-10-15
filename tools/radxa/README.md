@@ -20,6 +20,9 @@
 | [联网与HAT调试记录-20260928.md](联网与HAT调试记录-20260928.md) | DHCP 修复后的主板登录、HAT 舵机只读通讯结果和待排查项 |
 | `1-做卡.ps1` | Windows 右键「使用 PowerShell 运行」，选下载的 `.img.xz`，出一个 `xxx-鸭子卡.img`，Rufus 烧它 |
 | `build-armbian-card.sh` | 实际干活的脚本，Linux / WSL 里 `sudo bash build-armbian-card.sh xxx.img.xz card.conf` |
+| `kissqy-r1-v112.sh` | 在 kissqy 的「一键系统镜像 R1」上换瑞莎引导、写 extlinux，让 V1.12 板能开机；他的固件、模型、首次配网原样保留。可选 `--no-camera`、`--no-tof`、`--overlay i2c4-m0`。`sudo bash kissqy-r1-v112.sh microduck-zero3w-0.15.1-R1.img.xz [选项]`。为什么要改、离线验证结果见 [kissqy 镜像 R1 分析](../../docs/HD1910-20261012-kissqy镜像R1分析.md)；**还没上机** |
+
+两个脚本都会先找同目录下的瑞莎引导包 `u-boot-rk2410_2017.09-64-39cd993_arm64.deb`，没有才去 radxa-repo.github.io 下载。WSL 里 curl 下这个站偶尔 SSL 中断，这时先在 Windows 上下好，放到脚本同目录（校验值脚本会核对）。用完删掉，别把这个 .deb 提交进仓库。
 
 镜像用 **Armbian 26.2.1 trixie vendor 6.1.115 minimal**（Pollen 官方指定；国内镜像站只剩 26.8.1，
 26.2.1 在 `https://fi.mirror.armbian.de/archive/radxa-zero3/archive/`）。瑞莎引导程序从
@@ -38,3 +41,7 @@
 后续安装可参考 Pollen 官方 [install-dev.md](https://github.com/pollen-robotics/microduck/blob/main/docs/robot/install-dev.md)，但**本镜像不能直接照搬 `migrate-network.sh` → 重启的步骤**。当前检查的上游迁移脚本从 netplan 导入无线凭据，不会读取本镜像的 `wpa_supplicant-wlan0.conf`，也不会自动退出独立的 `wpa_supplicant@wlan0` / `25-wlan0.network` 配置。应先保留现有联网方式，待适配凭据导入、旧服务退出和失联恢复后再迁移，避免重启失联。
 
 安装脚本对 `armbianEnv.txt` 的修改也需核对到实际启动使用的 `extlinux.conf`，不能只依据脚本的检查结果判断硬件已配置完成。
+
+## 上机分析脚本
+
+[`onboard-analysis/`](onboard-analysis/)：2026-10-12 夜用来查「模型一接管就猛冲」的脚本，全部只读。包括 50 Hz 录像（开机自启服务）、电压温度记录、IMU 自洽检查、四方向检查、**IMU 零点校准**（站 HOME → 仿真算应有倾斜 → 新安装四元数）、失控转折点、推摇杆迈步统计、IMU 断线分析。

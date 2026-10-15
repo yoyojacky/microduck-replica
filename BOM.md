@@ -85,7 +85,7 @@
 
 | 部件 | 型号 | 数量 | 依据 / 备注 |
 |---|---|---|---|
-| 主控 | **Radxa Zero 3W** | 1 | 设备树 `compatible = "radxa,zero-3w"`。⚠️ 有多档 RAM/eMMC。官方 2026-08-27 发布页公布 **1 GB / 32 GB**，但 `microduck/` 源码中无佐证（源码本来就不体现板卡 SKU）；**复刻建议 2G/16G**，推算见 [电控采购清单](docs/电控采购清单.md#该买哪个配置)；系统镜像必须带 Rockchip 厂商内核（Armbian 系），否则 NPU 不存在 |
+| 主控 | **Radxa Zero 3W** | 1 | 设备树 `compatible = "radxa,zero-3w"`。有多档 RAM/eMMC。官方资料写的是 **1 GB 内存、32 GB 存储**（没说是 eMMC）；**复刻买 1G 或 2G 的无 eMMC 裸板 + 32 GB microSD 卡即可**，只走官方渠道，见 [电控采购清单](docs/电控采购清单.md#该买哪个配置)（2026-10-12 更正，此前建议 2G/16G eMMC 没必要）；系统镜像必须带 Rockchip 厂商内核（Armbian 系），否则 NPU 不存在 |
 | 摄像头 | 树莓派 Camera v2（**IMX219**） | 1 | `setup-board.sh` 用 `radxa-zero3-rpi-camera-v2` overlay。⚠️ **装歪了四分之一圈，要软件补偿**：当前代码 `mediad/src/main.rs:82` 的 `--rotate` 默认 **90**，注释原文「the head camera is mounted **a quarter turn off**, and this is the one place that fact is written down」。`media-bringup.md:472` 的 180° 是 **alpha 机**数据。**以代码为准 = 90°** |
 | 深度 | **VL53L5CX** 模块（或 L8CX） | 1 | 固件只认这两颗（revision `0x02` / `0x0C`），**L7CX 会被直接拒绝**；推荐 L5CX：板子 15.8 × 10 mm，L8CX 常见板型 33.4 mm 脸壳装不下（[实测](踩坑记录.md#买东西)）；地址 `0x29` 或 `0x52`；Stemma/Qwiic 接口 |
 | 电池 | **索尼 NP-F550**（2S，7.4 V） | 1 | ⚠️ 见下方勘误 |
